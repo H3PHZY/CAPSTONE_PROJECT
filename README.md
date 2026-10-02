@@ -22,8 +22,6 @@ A seller takes a photo of their surplus material. An AI model classifies it (Pla
 - Carbon impact tracking and a dashboard
 - My listings page with manage, edit, add photos, and delete
 
-**GitHub repository:** https://github.com/YOUR-USERNAME/YOUR-REPO
-
 ## Tech Stack
 
 | Layer | Tool | Why I chose it |
