@@ -155,25 +155,20 @@ docs/                  Screenshots and designs
 
 **Home page**
 
-![Home page](docs/screenshots/home.png)
+![Home page](designs/home_page.png)
 
-**Dashboard**
+**Market place**
 
-![Dashboard](docs/screenshots/dashboard.png)
+![Dashboard](designs/market_place.png)
 
-**Marketplace**
+**Quick listing**
 
-![Marketplace](docs/screenshots/marketplace.png)
-
-**Quick listing (3 steps: photo, AI check, publish)**
-
-![Quick listing](docs/screenshots/quick-listing.png)
+![Marketplace](designs/quick_listing.png)
 
 ### Figma mockups
 
 Figma link: PASTE-YOUR-FIGMA-LINK-HERE
 
-![Mockups](docs/designs/mockups.png)
 
 ### Database diagram
 
