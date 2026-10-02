@@ -1,0 +1,232 @@
+
+
+
+EcoLoop: An AI-Powered Industrial Waste Redistribution Marketplace for SMEs in Lagos, Nigeria
+
+
+Program: Bachelor of Science in Software Engineering
+Student: Hephzibah Ofomi
+Course: BSE Pre-Capstone
+Supervisor: [Supervisor Name]
+Year: 2026
+
+Declaration
+
+I, Hephzibah Ofomi, declare that this research proposal is my own original work and has not been submitted for any other academic award. All sources used have been acknowledged and properly cited in accordance with APA 7th Edition guidelines. Where the work of others has been consulted, it has been clearly attributed.
+
+Signature: _________________________
+
+Date: _____________________________
+
+Table of Contents
+
+Declaration.............................................................................................2
+Table of Contents.....................................................................................3
+List of Acronyms/Abbreviations.................................................................4
+CHAPTER ONE: INTRODUCTION.................................................................5
+1.1 Introduction and Background..............................................................5
+1.2 Problem Statement.............................................................................7
+1.3 Project Main Objective........................................................................8
+1.3.1 Specific Objectives...........................................................................8
+1.4 Research Questions.............................................................................9
+1.5 Project Scope......................................................................................9
+1.6 Significance and Justification.............................................................10
+CHAPTER TWO: LITERATURE REVIEW.....................................................11
+2.1 Introduction......................................................................................11
+2.2 Related Literature.............................................................................11
+2.3 Research Gap....................................................................................14
+2.4 Conceptual Framework......................................................................15
+2.5 Conclusion........................................................................................16
+CHAPTER THREE: RESEARCH METHODOLOGY.......................................17
+3.1 Introduction......................................................................................17
+3.2 Research Design................................................................................17
+3.3 System Analysis.................................................................................18
+3.4 System Architecture...........................................................................19
+3.5 System Design...................................................................................20
+3.6 Development Tools............................................................................21
+3.7 Ethical Considerations........................................................................21
+References..............................................................................................23
+
+List of Acronyms/Abbreviations
+
+AI         Artificial Intelligence
+API        Application Programming Interface
+CE         Circular Economy
+ERD        Entity Relationship Diagram
+GHG        Greenhouse Gas
+GCGO       Grand Challenges and Great Opportunities
+IS         Industrial Symbiosis
+JWT        JSON Web Token
+LASEPA     Lagos State Environmental Protection Agency
+LAWMA      Lagos State Waste Management Authority
+LCA        Life Cycle Assessment
+mAP        Mean Average Precision
+MVP        Minimum Viable Product
+NDC        Nationally Determined Contribution
+REST       Representational State Transfer
+SME        Small and Medium-Sized Enterprise
+SDG        Sustainable Development Goal
+SWM        Solid Waste Management
+YOLO       You Only Look Once
+
+CHAPTER ONE: INTRODUCTION
+
+1.1 Introduction and Background
+Climate change remains one of the defining global challenges of the twenty-first century, with the waste sector emerging as a quantifiably significant yet chronically underaddressed contributor to greenhouse gas (GHG) emissions. At the global level, poorly managed waste generates approximately 1.6 billion tonnes of carbon dioxide equivalent annually, a figure projected to grow as urban populations expand in the Global South (Omokaro et al., 2026). Within this broader context, Africa&apos;s waste sector accounts for approximately 8 percent of the continent&apos;s total GHG emissions, growing at twice the rate of overall continental emissions between 2000 and 2021 (Mamudu et al., 2025). Nigeria, as Africa&apos;s most populous country and largest economy, sits at the center of this challenge: the country generates an estimated 32 million tonnes of solid waste annually, of which only 20 to 30 percent is properly collected and managed, with less than 10 percent recycled (Onungwe et al., 2023).
+Industrial waste from small and medium-sized enterprise (SME) manufacturing clusters represents a particularly underserved segment of this crisis. Lagos State, home to dense industrial zones including Ikeja, Ogba, Isolo, and Apapa, houses the highest concentration of SME manufacturers on the African continent outside of South Africa. These enterprises routinely generate usable by-products, including metal scraps, plastic offcuts, wood remnants, and cardboard, as a natural consequence of daily production (Adesua-Lincoln, 2025). Despite the residual material value of these outputs, they are predominantly treated as waste due to structural failures in the exchange ecosystem that would otherwise connect producers with buyers.
+Research into circular economy (CE) adoption among Nigerian SMEs consistently documents a paradox: firms already engage in rudimentary resource-stretching behaviors, yet the absence of structured, low-friction exchange mechanisms prevents them from advancing to higher-order waste valorization (Ezeudu &amp; Ezeudu, 2019). Adesua-Lincoln (2025) finds that Nigerian SMEs rank lack of technology access, finance, and skilled workers as the primary barriers to formal CE adoption, even among enterprises that are conceptually aware of circular economy principles. This behavioral willingness, combined with structural constraint, defines the problem space EcoLoop is designed to address.
+Existing responses to this problem fall into two categories, both of which fall short in identifiable ways. National-level policy initiatives, such as Extended Producer Responsibility frameworks, operate on multi-decade timelines and offer no immediately usable tool for an individual SME to list and sell surplus material (Ezeudu, 2024). Conventional waste management platforms, where they exist, are structured around disposal and regulatory compliance rather than peer-to-peer exchange, introducing cost and procedural complexity that discourages routine adoption by small operators (Ezeudu et al., 2021). Neither approach provides the direct, market-driven channel needed to convert industrial by-products into tradable inputs within a local industrial cluster.
+Concurrently, the literature on AI-powered waste classification has matured rapidly, with YOLO-series models demonstrating real-time material identification capabilities that are increasingly accessible for low-cost deployment in resource-constrained settings (Ibitoye et al., 2026; Rajeev et al., 2025). Industrial symbiosis programmes in analogous African manufacturing contexts, particularly in Kenya and South Africa, have demonstrated that proximity-based waste exchange networks significantly reduce disposal costs and landfill-bound material volumes (Nkrumah et al., 2024; Oni et al., 2022). These developments point toward a convergent opportunity: a web-based marketplace that integrates AI-assisted material classification with location-aware buyer matching and real-time carbon impact tracking could provide the low-friction, market-driven channel that existing policy and platform solutions have failed to deliver.
+This study develops and pilots EcoLoop within this gap, targeting SME manufacturing clusters in the Ogba and Ikeja industrial zones of Lagos State. It contributes to the ALU Grand Challenge of Climate Change by reducing landfill-bound waste and the associated GHG emissions from virgin material extraction, and to the Great Opportunity of Job Creation through the economic activity generated by waste-to-resource transactions among SMEs.
+
+1.2 Problem Statement
+Across Nigeria&apos;s SME manufacturing clusters, significant volumes of usable industrial by-products are routinely discarded as waste rather than exchanged as inputs for other businesses. This is not primarily a problem of awareness: Adesua-Lincoln (2025) demonstrates that Nigerian SMEs already report resource-stretching behaviors and express interest in circular economy practices. Rather, it is a problem of infrastructure. The exchange ecosystem that would allow waste producers to find buyers efficiently, price materials credibly, and transact without prohibitive operational overhead does not exist at the scale or accessibility required for routine SME use.
+Two closely related studies illuminate the specific dimensions of this gap and, in doing so, establish the research contribution EcoLoop is positioned to make. Ezeudu et al. (2021) examine co-production arrangements between formal and informal waste actors in Nigeria, finding that while synergies between waste producers and buyers do exist, they remain geographically fragmented, ad hoc, and dependent on personal networks rather than any structured platform. The study&apos;s principal limitation is its descriptive scope: it documents that informal exchange occurs but does not test any intervention designed to formalize, digitize, or scale it. This leaves unanswered the question of whether a digital marketplace could replicate and extend these informal synergies to SMEs that lack established buyer networks.
+Onungwe et al. (2023), in a systematic review of 74 studies on circular economy transition in Nigeria&apos;s municipal solid waste sector, identify low technology adoption and governance gaps as the primary structural barriers to CE implementation. A key limitation of this body of literature is its near-exclusive focus on municipal waste streams managed by public or formal-sector actors. Industrial waste generated by SME manufacturers, a category with distinct material profiles, ownership structures, and exchange dynamics, receives almost no direct attention. This leaves a significant empirical gap: there is no study examining whether a technology-enabled, SME-specific marketplace can overcome the adoption barriers Onungwe et al. document in the broader Nigerian waste context.
+EcoLoop directly addresses both limitations. By developing and piloting a web-based platform that integrates AI-assisted material classification, location-aware buyer matching, and real-time carbon impact tracking, this research tests whether a purpose-built digital tool can formalize the informal synergies Ezeudu et al. (2021) document, and overcome the technology adoption barriers Onungwe et al. (2023) identify, within the specific context of SME industrial waste in Lagos&apos;s manufacturing clusters.
+
+1.3 Project Main Objective
+To develop EcoLoop, a web-based marketplace that connects SMEs generating surplus industrial materials with nearby verified buyers, using AI-assisted material classification and real-time carbon impact tracking, in order to address the visibility, pricing, and adoption barriers identified in section 1.2 and enable a low-friction, market-driven channel for industrial waste exchange in Lagos State.
+
+1.3.1 Specific Objectives
+To design and deploy a web-based marketplace MVP enabling SME users to create a material listing, including photo upload, AI-assisted classification, and manual override, in under 60 seconds, by the end of the final capstone development phase.
+To integrate a YOLOv8-based computer vision model capable of classifying at least six material categories (plastic, glass, metal, wood, cardboard, and biodegradable) with a target classification accuracy of at least 75 percent on a test set of locally sourced waste images, by the end of the model training phase.
+To implement a location-aware marketplace feature allowing buyers to filter listings by material type and proximity, tested with a pilot group of approximately 20 SMEs within the Ogba and Ikeja cluster over a six-week period.
+To build and validate a carbon impact calculator that estimates CO2 savings per completed transaction using LCA-based reference values, with results reviewed against completed pilot transactions by the end of the pilot period.
+
+1.4 Research Questions
+To what extent does a location-aware digital marketplace reduce the time SMEs spend finding buyers for surplus industrial materials, compared to existing informal channels?
+How accurately can a YOLOv8-based model classify common industrial waste materials when SME users capture images under real-world conditions?
+Does visible carbon footprint feedback increase SME users&apos; willingness to list and complete transactions for surplus materials on the platform?
+What barriers do SMEs face in adopting a digital marketplace for waste exchange, and how does platform design influence adoption?
+
+1.5 Project Scope
+This project will pilot EcoLoop within the Ogba and Ikeja industrial cluster, Lagos State, selected for its concentration of light manufacturing SMEs and the diversity of waste streams it generates. The pilot will target approximately 20 SME sellers and 5 to 10 verified buyers over a six-week deployment period following MVP completion.
+The MVP scope covers user registration and authentication, material listing creation with AI-assisted classification and manual correction, location-based marketplace browsing and filtering, in-app messaging between buyers and sellers, basic transaction status tracking, and per-transaction carbon impact estimation. Features deferred to the post-MVP roadmap include integrated payment processing, automated third-party logistics partnerships, smart pricing algorithms, and an eco-chatbot assistant. Findings from the pilot will be specific to the Ogba and Ikeja cluster and will require further validation before generalizing to other industrial zones or rural manufacturing contexts.
+
+1.6 Significance and Justification
+EcoLoop addresses a measurable and growing contributor to Nigeria&apos;s climate challenge. The waste sector accounts for approximately 15 percent of Nigeria&apos;s national GHG emissions, making it the country&apos;s second largest emitting sector after energy (Mamudu et al., 2025). A platform that diverts even a fraction of Lagos&apos;s industrial waste from landfill into productive reuse generates directly quantifiable emissions savings aligned with Nigeria&apos;s NDC commitment to reduce emissions 20 percent below business-as-usual by 2030.
+The research benefits a range of stakeholders including SME owners and operators, industrial buyers and recyclers, regulatory bodies such as LAWMA and LASEPA, environmental NGOs, and the academic community studying circular economy adoption in developing economies.
+More broadly, a successful pilot provides practical evidence for how AI-assisted, market-driven waste exchange can contribute to Nigeria&apos;s circular economy goals, supporting the kind of private-sector and policy investment needed to advance these ambitions at scale.
+
+
+CHAPTER TWO: LITERATURE REVIEW
+
+2.1 Introduction
+This chapter reviews the scholarly literature informing EcoLoop&apos;s design and research questions. The review is organized around five themes: Nigeria&apos;s industrial waste and climate profile; circular economy adoption among African SMEs; digital platforms and industrial symbiosis; AI-powered waste classification; and behavioral dimensions of waste management. The review draws on 21 peer-reviewed sources and aims to establish both the theoretical and empirical foundations for the study, while identifying the specific gaps in the existing literature that this capstone addresses.
+
+2.2 Related Literature
+2.2.1 Nigeria&apos;s Industrial Waste and Climate Profile
+Nigeria&apos;s waste sector is a quantifiably significant contributor to national and regional GHG emissions. Yusuf et al. (2022) document significant seasonal methane outputs from Lagos waste disposal sites, driven by the high proportion of biodegradable material in the mixed waste stream. Mamudu et al. (2025) situate these findings within a continental picture, confirming Nigeria as West Africa&apos;s leading CH4 emitter, with waste disposal practices among the primary driving factors. Omokaro et al. (2026) trace these outcomes to systemic infrastructure failures: inadequate waste collection coverage, minimal sorting and separation, and a near-total absence of industrial recycling pathways at the SME level. Onungwe et al. (2023) synthesize these findings across 74 studies, identifying governance fragmentation and low technology adoption as the structural roots of the problem.
+Importantly, Olanrewaju and Ilemobade (2022) situate these findings within Nigeria&apos;s national climate commitments, noting that while the country&apos;s NDC targets a 20 percent emissions reduction by 2030, waste management receives limited attention in implementation strategies. Olukanni and Ede (2021) add a behavioral dimension, documenting low public awareness of the GHG implications of waste disposal in Nigerian cities, with significant variation by socioeconomic zone. Together, this body of evidence establishes that industrial waste mismanagement in Lagos is not a peripheral issue but a quantifiable, addressable contributor to Nigeria&apos;s climate challenge.
+2.2.2 Circular Economy Adoption Among African SMEs
+The circular economy literature specific to Nigerian SMEs reveals a consistent paradox: firms already practice rudimentary resource reuse but lack the structured mechanisms to advance this behavior into formal, traceable, and scalable waste exchange. Ezeudu and Ezeudu (2019) document this through case studies showing that Nigerian industries engage primarily in first-level CE behaviors such as material reduction, while higher-order strategies such as industrial symbiosis remain rare. Adesua-Lincoln (2025) quantifies the barriers: technology access, finance, and skilled workers are consistently ranked as the most significant constraints, even among SMEs that are aware of CE principles.
+Ezeudu et al. (2021) add granularity by examining co-production arrangements between formal and informal waste actors, finding that while synergies exist, they remain ad hoc and geographically fragmented. Ezeudu (2024) extends this to the policy level, arguing that Extended Producer Responsibility frameworks could scaffold CE adoption but are hampered by governance fragmentation. Oni et al. (2022) situate Nigeria within the pan-African picture, noting that South Africa and Kenya have advanced further through structured institutional programmes, while Nigeria lags significantly. Benachio et al. (2020) offer a comparative perspective from the construction sector, where digital platforms for waste exchange are consistently identified as a gap in developing-economy contexts.
+2.2.3 Digital Platforms and Industrial Symbiosis
+Blackburn et al. (2026) provide the most comprehensive mapping of CE platform typologies, finding that SME-focused digital waste marketplaces in developing regions are systematically underserved. Nkrumah et al. (2024) provide an African case study, documenting how proximity-based waste exchange networks in Kisumu, Kenya, reduce disposal costs and landfill volumes. Their finding that physical proximity and trust are the primary enablers of informal IS informs EcoLoop&apos;s location-aware design and verified-buyer system. Oni et al. (2022) note that Kenya&apos;s progress is partly attributable to institutional facilitation, suggesting that a well-designed digital platform performing a similar matchmaking function could replicate these outcomes without requiring the same level of government coordination.
+2.2.4 AI-Powered Waste Classification
+Hassan et al. (2024) document a 47.6 percent increase in AI-based waste classification publications between 2023 and 2024, confirming the technical maturity of this field as a foundation for applied tools. Abubakar et al. (2022) frame AI&apos;s role not merely as a classification utility but as a climate tool, mapping GHG savings achievable through AI-assisted waste diversion. The specific choice of YOLOv8 as EcoLoop&apos;s classification backbone is supported by Rajeev et al. (2025), who benchmark multiple YOLO variants and find YOLOv8 the strongest performer due to its anchor-free detection architecture. Ren et al. (2024) demonstrate YOLOv8-based classification under variable lighting and occlusion, conditions directly relevant to SME users photographing waste in factory environments. Sayem et al. (2025) establish an upper-bound benchmark of 83.11 percent accuracy on a 28-category dataset, contextualizing EcoLoop&apos;s 75 percent target as realistic and conservative. Ibitoye et al. (2026) situate YOLO-series models within the broader landscape of AI tools for waste valorization, confirming their applicability to low-cost deployment contexts.
+2.2.5 Behavioral and Sociocultural Dimensions
+Akintayo et al. (2023) identify a critical design implication: Nigeria&apos;s waste management interventions have been dominated by technical and regulatory frameworks while largely neglecting the behavioral change science needed to shift producer habits. Olukanni and Ede (2021) provide empirical support, documenting low awareness of GHG implications of disposal among Nigerian urban residents. These findings inform EcoLoop&apos;s carbon calculator feature: making the climate cost of each transaction visible is not a supplementary design choice but a behaviorally motivated intervention designed to close the feedback loop between a user&apos;s action and its environmental consequence.
+
+2.3 Research Gap
+Three significant gaps emerge from this review. First, the literature on CE platform adoption is drawn almost exclusively from developed-economy contexts. Empirical evidence on what drives SME adoption of digital waste marketplaces in Sub-Saharan African manufacturing clusters is nearly absent, making EcoLoop&apos;s pilot an original contribution to this literature.
+Second, while Ezeudu et al. (2021) document the existence of informal waste exchange synergies in Nigeria, no study tests a digital intervention designed to formalize or scale these synergies. EcoLoop directly fills this gap by deploying and evaluating a purpose-built platform within the same manufacturing context.
+Third, the literature on AI waste classification focuses almost exclusively on technical accuracy metrics, with little attention to the user experience variables (ease of upload, classification confidence communication, manual override) that determine whether classification tools are actually adopted by non-technical SME users in practice. EcoLoop&apos;s pilot generates the first empirical data on this question in a Nigerian industrial context.
+
+2.4 Conceptual Framework
+EcoLoop is grounded in three theoretical frameworks. The Circular Economy framework, as elaborated by Ezeudu and Ezeudu (2019) and Blackburn et al. (2026), provides the overarching logic: waste outputs from one production process become resource inputs for another, reducing both disposal costs and virgin material extraction emissions. EcoLoop operationalizes this logic at the SME level through a peer-to-peer marketplace model.
+Industrial Symbiosis theory, as documented by Nkrumah et al. (2024) and Oni et al. (2022), provides the exchange mechanism: geographically proximate firms exchange waste streams in ways that generate mutual economic and environmental benefit. EcoLoop digitizes and scales this mechanism by replacing the personal networks and institutional coordinators that conventional IS programmes rely on with an AI-assisted platform accessible to any registered SME.
+Technology Acceptance theory provides the behavioral frame for Research Questions 3 and 4: the platform&apos;s adoption will depend not only on its technical performance but on users&apos; perceived ease of use and perceived usefulness. The visible carbon impact feedback is designed to increase perceived usefulness by making the environmental benefit of each transaction tangible to users who may otherwise view the platform purely through an economic lens (Akintayo et al., 2023; Olukanni &amp; Ede, 2021).
+
+2.5 Conclusion
+The literature confirms that industrial waste mismanagement in Nigeria is a quantifiable contributor to the Grand Challenge of Climate Change, that Nigerian SMEs are structurally rather than motivationally constrained from participating in circular economy exchange, and that AI-assisted classification tools are technically mature enough for deployment in the EcoLoop context. The most significant gaps the existing literature leaves open are empirical: there is no study of a digital waste marketplace operating in a Nigerian SME manufacturing context, no evaluation of YOLOv8&apos;s performance on locally sourced industrial waste imagery, and no evidence on whether visible carbon feedback influences SME transaction behavior. These are the contributions this capstone project will make.
+
+
+CHAPTER THREE: RESEARCH METHODOLOGY
+
+3.1 Introduction
+This chapter describes the methodology that will guide EcoLoop&apos;s design, development, and evaluation. The approach combines Agile software development practices with a mixed methods evaluation framework, reflecting EcoLoop&apos;s dual nature as both a software artifact and a sociotechnical intervention. The chapter covers the research design, analysis of existing systems, system architecture, system design diagrams, development tools, and ethical considerations.
+
+3.2 Research Design
+EcoLoop will be developed using an Agile methodology, organized into iterative sprints. Agile was selected over a linear Waterfall approach because EcoLoop integrates three interdependent components: a React frontend, a Node.js backend REST API, and a Python-based YOLOv8 AI microservice. Building and testing these components iteratively reduces integration risk and allows the team to adjust the AI classification layer based on early accuracy feedback before the pilot deployment begins.
+The development will proceed across four sprint cycles. Sprint 1 covers user authentication, database schema setup, and the core listing creation flow. Sprint 2 integrates the YOLOv8 classification model via a FastAPI microservice and validates accuracy on an initial dataset of locally sourced waste images. Sprint 3 implements the location-aware marketplace, buyer messaging, and transaction tracking. Sprint 4 integrates the carbon calculator, conducts end-to-end testing, and deploys the MVP to the Render hosting environment for the six-week pilot.
+The evaluation adopts a sequential explanatory mixed methods design: quantitative platform analytics data collected during the pilot will be analyzed first, followed by qualitative semi-structured interviews to explain the behavioral patterns the quantitative data reveals.
+
+3.3 System Analysis
+3.3.1 Analysis of Existing Systems
+Three categories of existing systems were reviewed to inform EcoLoop&apos;s design. Informal scrap dealer networks represent the dominant existing mechanism for industrial waste exchange in Lagos. These operate through personal contacts and word-of-mouth, are geographically limited to areas where dealers and sellers already know each other, offer no material classification support, no carbon impact tracking, and no price transparency. They are inaccessible to SMEs without established dealer relationships.
+General classifieds platforms such as OLX Nigeria allow users to post second-hand goods including occasional industrial materials. However, they are not designed for industrial waste, provide no AI-assisted material identification, no verified-buyer system, no proximity filtering by material type, and no environmental impact tracking. Their generic structure introduces friction for industrial users who need to classify, describe, and price technical waste materials.
+National circular economy policy initiatives, such as Nigeria&apos;s Extended Producer Responsibility frameworks, operate at a regulatory and infrastructure level and do not offer individual SMEs a tool for day-to-day surplus material exchange. All three existing approaches share the same core limitation: none provides a direct, low-friction, market-driven channel for SME-to-buyer waste exchange with AI assistance and environmental impact visibility.
+3.3.2 Description of the New System
+EcoLoop addresses these gaps through four integrated modules. The listing module allows SME sellers to photograph surplus materials, receive an instant YOLOv8-generated material classification with a confidence score, override the classification manually if needed, and publish the listing with weight, location, and asking price in under 60 seconds. The marketplace module presents geo-filtered listings to verified buyers, who can search by material type and proximity and initiate contact through the in-app messaging interface. The carbon module computes CO2 savings per completed transaction using LCA-based emission factors and displays a cumulative impact dashboard to both sellers and buyers. The analytics module logs all key platform events to a PostgreSQL database, generating the quantitative dataset used to evaluate the platform&apos;s performance against the research objectives.
+Functional requirements include user registration and role-based access (seller/buyer), image upload and AI classification, manual classification override, location-based listing search, in-app messaging, transaction status tracking, and carbon impact display. Non-functional requirements include a listing creation time of under 60 seconds, a YOLOv8 classification response time of under three seconds, secure JWT-based authentication, and platform availability of at least 99 percent during the pilot period.
+
+3.4 System Architecture
+EcoLoop follows a three-layer architecture. The frontend layer consists of a React application built with Vite and styled with Tailwind CSS. The backend layer consists of two services: a Node.js/Express REST API handling user management, listings, transactions, and carbon calculations; and a Python/FastAPI microservice hosting the fine-tuned YOLOv8 model. The data layer consists of a PostgreSQL database for structured relational data and Cloudinary for waste image storage. JWT tokens secure communication between the frontend and the Node.js API. The Node.js API calls the Python AI service via internal HTTP when a new image is uploaded for classification. The entire system is hosted on Render.
+Refer to Figure 1 (System Architecture Diagram) included in the supplementary materials for a visual representation of the component relationships and data flows described above.
+
+3.5 System Design
+Three core design artifacts structure EcoLoop&apos;s system design.
+The Use Case Diagram (Figure 2) identifies three actors: the SME Seller, the Buyer, and the YOLOv8 AI System. The SME Seller interacts with register/log in, upload waste material, view carbon savings, and complete transaction use cases. The Buyer interacts with register/log in, browse marketplace, contact seller, view carbon savings, and complete transaction use cases. The YOLOv8 AI System is invoked by an include relationship from the upload waste material use case, automatically classifying the uploaded image and returning a material type and confidence score.
+The Entity Relationship Diagram (Figure 3) defines six core entities. The User entity stores role (seller or buyer), name, email, and location. The Listing entity stores the material title, weight, status, and geographic coordinates, and references the User who created it. The Classification entity stores the YOLOv8-generated material type and confidence score for each listing, along with a boolean flag for manual override. The Transaction entity records completed exchanges between a listing and a buyer. The Carbon Record entity stores the CO2 savings computed for each transaction. The Message entity records in-platform communications between users about a specific listing.
+The Class Diagram (Figure 4, to be produced during implementation) will reflect the object-oriented structure of the Node.js backend, with primary classes including User, Listing, Classification, Transaction, CarbonRecord, and MessageService, each encapsulating the relevant business logic and database access methods.
+
+3.6 Development Tools
+The following tools will be used in EcoLoop&apos;s development. React with Vite provides the frontend component framework and build tooling. Tailwind CSS handles responsive styling. Node.js with Express provides the primary backend REST API. Python with FastAPI serves the YOLOv8 classification microservice. PostgreSQL stores all relational data. Cloudinary manages waste image uploads and retrieval. JWT handles stateless authentication. The Ultralytics YOLOv8 library provides the pre-trained model that will be fine-tuned on a locally sourced industrial waste dataset. Render is the deployment platform for both the Node.js backend and the Python microservice. GitHub provides version control and collaboration for the development team.
+
+3.7 Ethical Considerations
+All participants in the pilot study will receive a plain-language information sheet explaining the purpose of the research, what participation involves, how their data will be used, and their right to withdraw at any time without consequence. Written informed consent will be obtained from all participants before the onboarding survey and before any interview is conducted.
+Data privacy will be maintained throughout. Platform usage data will be stored on a password-protected server accessible only to the research team. Interview recordings and transcripts will be stored in encrypted folders and deleted after analysis. No personally identifiable information will appear in published outputs; SME participants will be anonymized using assigned codes such as SME-01, SME-02, and so on.
+Two specific ethical considerations are flagged. First, since participants share information about their waste disposal practices, which may carry regulatory implications in some contexts, all participants will be explicitly assured that the research is academic in nature and that no data will be shared with regulatory authorities. Second, the carbon impact figures generated by the platform&apos;s calculator will be presented as estimates derived from LCA reference values rather than certified measurements, to avoid generating misleading environmental claims that could be used for greenwashing purposes (IPCC, 2006).
+The study will be conducted in accordance with African Leadership University&apos;s research ethics guidelines, and ethical clearance will be sought from the relevant institutional body before data collection begins.
+
+
+References
+
+Abubakar, I. R., et al. (2022). Artificial intelligence&apos;s role in waste management toward sustainable development goals. Waste Management and Research, 40(12), 1771-1782. https://doi.org/10.1177/0734242X221091772
+
+Adesua-Lincoln, A. (2025). Challenges to environmental sustainability and circular economy practices of Nigerian small and medium enterprises. Journal of Sustainable Business, 10(1), Article 6. https://doi.org/10.1186/s40991-025-00110-9
+
+Akintayo, T., Hamalainen, J., Pasanen, P., &amp; John, I. (2023). A rapid review of sociocultural dimensions in Nigeria&apos;s solid waste management approach. International Journal of Environmental Research and Public Health, 20(13), 6245. https://doi.org/10.3390/ijerph20136245
+
+Benachio, G. L. F., Freitas, M. C. D., &amp; Tavares, S. F. (2020). Circular economy in the construction industry: A systematic literature review. Journal of Cleaner Production, 260, 121046. https://doi.org/10.1016/j.jclepro.2020.121046
+
+Blackburn, R., et al. (2026). Circular economy platforms: A systematic review. Business Strategy and the Environment, 35(1), 1-22. https://doi.org/10.1002/bse.70307
+
+Braun, V., &amp; Clarke, V. (2006). Using thematic analysis in psychology. Qualitative Research in Psychology, 3(2), 77-101. https://doi.org/10.1191/1478088706qp063oa
+
+Ezeudu, O. B. (2024). Harnessing the drivers and barriers to implementation of extended producer responsibility for circular economy in Nigeria. Circular Economy and Sustainability, 4(2), 1461-1486. https://doi.org/10.1007/s43615-023-00340-8
+
+Ezeudu, O. B., &amp; Ezeudu, T. S. (2019). Implementation of circular economy principles in industrial solid waste management: Case studies from a developing economy (Nigeria). Recycling, 4(4), 42. https://doi.org/10.3390/recycling4040042
+
+Ezeudu, O. B., Oraelosi, T. C., Agunwamba, J. C., &amp; Ugochukwu, U. C. (2021). Co-production in solid waste management: Analyses of emerging cases and implications for circular economy in Nigeria. Environmental Science and Pollution Research, 28(37), 52392-52404. https://doi.org/10.1007/s11356-021-14471-8
+
+Hassan, M. M., et al. (2024). A systematic review of AI-based techniques for automated waste classification. Applied Sciences, 14(11), 4577. https://doi.org/10.3390/app14114577
+
+Ibitoye, O., et al. (2026). Smart waste, smarter world: Exploring waste types, trends, and tech-driven valorisation through artificial intelligence, Internet of Things, and blockchain. Sustainable Development, 34(2), 112-131. https://doi.org/10.1002/sd.70345
+
+IPCC. (2006). 2006 IPCC guidelines for national greenhouse gas inventories, Volume 5: Waste. Institute for Global Environmental Strategies. https://www.ipcc-nggip.iges.or.jp/public/2006gl/vol5.html
+
+Mamudu, A. Z., et al. (2025). Unmasking climate vulnerability in Africa: the role of CO2 and CH4 emissions on rising temperatures and sea levels. Humanities and Social Sciences Communications, 12, Article 589. https://doi.org/10.1057/s41599-025-04890-0
+
+Nkrumah, F., et al. (2024). Influence of industrial symbiosis on solid waste reuse in manufacturing industries in Kisumu County, Kenya. European Journal of Environment and Earth Sciences, 5(1), 1-6. https://doi.org/10.24018/ejgeo.2024.5.1.422
+
+Olanrewaju, O. A., &amp; Ilemobade, A. A. (2022). A systematic review on climate change mitigation efforts in Nigeria. Discover Applied Sciences, 4(5), Article 142. https://doi.org/10.1007/s42452-025-08109-4
+
+Olukanni, D. O., &amp; Ede, A. N. (2021). Public perception and awareness of waste management from Benin City. Scientific Reports, 11, Article 306. https://doi.org/10.1038/s41598-020-79688-y
+
+Omokaro, G. O., Michael, I., Efeni, O. S., Adeyanju, O. I., &amp; Obomejero, J. (2026). Waste management in Nigeria: Systemic failures, circular economy pathways and sustainable solutions. Environmental Development, 57. https://doi.org/10.1016/j.envdev.2025.101321
+
+Oni, O. O., et al. (2022). Current status, emerging challenges, and future prospects of industrial symbiosis in Africa. International Journal of Environmental Research, 16(4), Article 59. https://doi.org/10.1007/s41742-022-00429-2
+
+Onungwe, I., Hunt, D. V. L., &amp; Jefferson, I. (2023). Transition and implementation of circular economy in municipal solid waste management system in Nigeria: A systematic review of the literature. Sustainability, 15(16), 12602. https://doi.org/10.3390/su151612602
+
+Rajeev, P. A., Dharewa, V., Lakshmi, D., Vishnuvarthanan, G., Giri, J., Sathish, T., &amp; Alrashoud, M. (2025). Advancing e-waste classification with customizable YOLO based deep learning models. Scientific Reports, 15, Article 18151. https://doi.org/10.1038/s41598-025-94772-x
+
+Ren, Y., Li, Y., &amp; Gao, X. (2024). An MRS-YOLO model for high-precision waste detection and classification. Sensors, 24(13), 4339. https://doi.org/10.3390/s24134339
+
+Sayem, F. R., Islam, M. S. B., Naznine, M., Nashbat, M., Hasan-Zia, M., Kunju, A. K. A., &amp; Chowdhury, M. E. H. (2025). Enhancing waste sorting and recycling efficiency: Robust deep learning-based approach for classification and detection. Neural Computing and Applications, 37(6), 4567-4583. https://doi.org/10.1007/s00521-024-10855-2
+
+Yusuf, R. O., et al. (2022). Methane emission from municipal solid waste disposal sites in Lagos, Nigeria. Global Journal of Environmental Science and Management, 8(1), 1-14. https://doi.org/10.22034/gjesm.2022.01.01
+
