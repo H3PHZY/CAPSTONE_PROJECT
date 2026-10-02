@@ -36,17 +36,6 @@ A seller takes a photo of their surplus material. An AI model classifies it (Pla
 | Realtime | Supabase Realtime | New messages show up without refreshing. |
 | Deployment (planned) | Vercel and Supabase | Free tiers, deploys automatically from GitHub. |
 
-### Architecture
-
-```mermaid
-flowchart LR
-    U[Browser] --> F[Next.js frontend]
-    F --> A[Next.js API route /api/classify]
-    F --> S[(Supabase: Postgres, Auth, Storage, Realtime)]
-    A --> H[Hugging Face Inference API]
-    A --> S
-```
-
 ### Scope of this MVP
 
 **In scope:** auth, profiles, listings, AI classification with override, marketplace filters, messages, transactions, carbon impact.
@@ -95,12 +84,23 @@ npm install
 Copy the example file:
 
 ```bash
-cp .env.example .env.local
+# Supabase (Dashboard → Project Settings → API)
+NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
+PROJECT_URL=https://YOUR_PROJECT_REF.supabase.co
+
+# Server-only (never expose to the browser)
+# SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+
+# Hugging Face — yangy50/garbage-classification
+# https://huggingface.co/yangy50/garbage-classification
+# Localhost MVP: token + model id is enough
+HF_TOKEN=hf_your_access_token
+HF_MODEL_ID=yangy50/garbage-classification
+# Optional (paid/dedicated): Deploy → Inference Endpoints → paste URL
+# HF_ENDPOINT_URL=https://YOUR-ENDPOINT.REGION.aws.endpoints.huggingface.cloud
+
 ```
-
-On Windows PowerShell use `Copy-Item .env.example .env.local`.
-
-Then fill in `.env.local`:
 
 | Variable | What it is for |
 |----------|----------------|
@@ -110,7 +110,6 @@ Then fill in `.env.local`:
 | `HF_TOKEN` | Your Hugging Face access token |
 | `HF_MODEL_ID` | `yangy50/garbage-classification` |
 
-Never commit `.env.local`. It is already in `.gitignore`.
 
 ### 5. Allow the password reset link
 
@@ -165,7 +164,7 @@ docs/                  Screenshots and designs
 
 ### Figma mockups
 
-Figma link: PASTE-YOUR-FIGMA-LINK-HERE
+https://www.figma.com/design/aCXrOjGhfNWAcoflulx1PJ/Untitled?node-id=0-1&t=TF2KlRKGlA5m9qLC-1
 
 
 ### Style guide
