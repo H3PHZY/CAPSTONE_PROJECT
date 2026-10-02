@@ -4,7 +4,7 @@ AI-powered marketplace that helps factories in Lagos sell their scrap and surplu
 
 ## Video Demo
 
-PASTE-YOUR-VIDEO-LINK-HERE (Google Drive or YouTube unlisted, set to "Anyone with the link can view")
+https://youtu.be/ecTjW5Ah1tM
 
 ## Description
 
@@ -168,10 +168,6 @@ docs/                  Screenshots and designs
 Figma link: PASTE-YOUR-FIGMA-LINK-HERE
 
 
-### Database diagram
-
-![Database diagram](docs/designs/erd.png)
-
 ### Style guide
 
 | Item | Value |
@@ -296,83 +292,6 @@ create policy "Transaction parties can read"
   using (buyer_id = auth.uid() or seller_id = auth.uid());
 ```
 
-## Database Schema
-
-```mermaid
-erDiagram
-    PROFILES ||--o{ LISTINGS : "sells"
-    LISTINGS ||--o| CLASSIFICATIONS : "has"
-    LISTINGS ||--o{ TRANSACTIONS : "has"
-    LISTINGS ||--o{ MESSAGES : "about"
-    PROFILES ||--o{ TRANSACTIONS : "buyer or seller"
-    PROFILES ||--o{ MESSAGES : "sender or recipient"
-    TRANSACTIONS ||--o| CARBON_RECORDS : "creates"
-
-    PROFILES {
-        uuid id PK
-        text business_name
-        text phone
-        text cluster
-        text zone
-        boolean sells
-        boolean buys
-        boolean carbon_impact
-        boolean research_consent
-        boolean verified
-        text avatar_url
-    }
-    LISTINGS {
-        uuid id PK
-        uuid seller_id FK
-        text title
-        enum material
-        numeric weight_kg
-        numeric price_ngn
-        enum status
-        text photo_url
-        text_array photo_urls
-        text zone
-        int views
-    }
-    CLASSIFICATIONS {
-        uuid id PK
-        uuid listing_id FK
-        enum predicted_material
-        numeric confidence
-        boolean overridden
-        enum final_material
-        text model_id
-    }
-    TRANSACTIONS {
-        uuid id PK
-        uuid listing_id FK
-        uuid buyer_id FK
-        uuid seller_id FK
-        enum status
-        text payment_ref
-        timestamptz completed_at
-    }
-    CARBON_RECORDS {
-        uuid id PK
-        uuid transaction_id FK
-        enum material
-        numeric weight_kg
-        numeric co2e_kg
-        numeric factor_kg_per_kg
-    }
-    MESSAGES {
-        uuid id PK
-        uuid listing_id FK
-        uuid sender_id FK
-        uuid recipient_id FK
-        text body
-        uuid reply_to FK
-        text image_url
-        text attachment_name
-        text attachment_mime
-    }
-```
-
 **Enums:**
 
 - `material_category`: Plastic, Glass, Metal, Biodegradable, Rubber
@@ -382,8 +301,6 @@ erDiagram
 **Storage buckets:** `listing-photos`, `message-attachments`, `profile-avatars`
 
 The full SQL is in `supabase/migrations/` (13 files).
-
-## Deployment Plan
 
 The MVP currently runs locally for the demo.
 
