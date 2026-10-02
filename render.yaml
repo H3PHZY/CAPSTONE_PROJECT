@@ -1,0 +1,13 @@
+# Render Blueprint – static site with SPA fallback so /inventory, /listings, etc. work on direct load/refresh
+# See https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: ecoloop-frontend
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      # Serve index.html for all paths so React Router can handle /inventory, /listings, /seller/*, etc.
+      - type: rewrite
+        source: /*
+        destination: /index.html
