@@ -40,7 +40,7 @@ A seller takes a photo of their surplus material. An AI model classifies it (Pla
 
 **In scope:** auth, profiles, listings, AI classification with override, marketplace filters, messages, transactions, carbon impact.
 
-**Out of scope (later):** in-app payments, logistics partners, smart pricing, a chatbot, and training a custom model from scratch. After a lot is reserved, buyer and seller share payment details and proof in Messages, then mark the exchange completed.
+**Out of scope (later/considering):** in-app payments, logistics partners, smart pricing, a chatbot, and training a custom model from scratch. After a lot is reserved, buyer and seller share payment details and proof in Messages, then mark the exchange completed.
 
 ### How the AI classification works
 
@@ -62,7 +62,7 @@ A seller takes a photo of their surplus material. An AI model classifies it (Pla
 
 ```bash
 git clone https://github.com/YOUR-USERNAME/YOUR-REPO.git
-cd YOUR-REPO
+cd The REPO
 ```
 
 ### 2. Install packages
@@ -104,10 +104,10 @@ HF_MODEL_ID=yangy50/garbage-classification
 
 | Variable | What it is for |
 |----------|----------------|
-| `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Your Supabase anon (public) key |
+| `NEXT_PUBLIC_SUPABASE_URL` | My Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | My Supabase anon (public) key |
 | `PROJECT_URL` | Same as the Supabase URL, used to check image URLs on the server |
-| `HF_TOKEN` | Your Hugging Face access token |
+| `HF_TOKEN` | My Hugging Face access token |
 | `HF_MODEL_ID` | `yangy50/garbage-classification` |
 
 
