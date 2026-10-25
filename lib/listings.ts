@@ -146,7 +146,7 @@ export async function fetchLiveListings(viewerCluster?: string | null) {
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return ((data ?? []) as ListingJoin[]).map((row) => mapListingRow(row, viewer));
+  return ((data ?? []) as unknown as ListingJoin[]).map((row) => mapListingRow(row, viewer));
 }
 
 export async function fetchListingById(id: string, viewerCluster?: string | null) {
@@ -161,7 +161,7 @@ export async function fetchListingById(id: string, viewerCluster?: string | null
 
   if (error) throw error;
   if (!data) return null;
-  return mapListingRow(data as ListingJoin, viewer);
+  return mapListingRow(data as unknown as ListingJoin, viewer);
 }
 
 export async function fetchMyListings(sellerId: string) {

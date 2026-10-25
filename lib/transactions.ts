@@ -11,6 +11,7 @@ export type TransactionView = {
   sellerId: string;
   status: TransactionStatus;
   completedAt: string | null;
+  paidAt: string | null;
   createdAt: string;
   listingTitle: string;
   material: MaterialCategory;
@@ -27,6 +28,8 @@ type TxnJoin = {
   seller_id: string;
   status: TransactionStatus;
   completed_at: string | null;
+  payment_ref: string | null;
+  paid_at: string | null;
   created_at: string;
   listing?: {
     id: string;
@@ -71,6 +74,7 @@ function mapTxn(row: TxnJoin, viewerId: string): TransactionView {
     sellerId: row.seller_id,
     status: row.status,
     completedAt: row.completed_at,
+    paidAt: row.paid_at,
     createdAt: row.created_at,
     listingTitle: row.listing?.title || "Listing",
     material: (row.listing?.material || "Metal") as MaterialCategory,
@@ -169,7 +173,7 @@ export async function markAsAgreed(input: {
       .select(TXN_SELECT)
       .single();
     if (error) throw error;
-    return mapTxn(data as TxnJoin, input.actorId);
+  return mapTxn(data as unknown as TxnJoin, input.actorId);
   }
 
   if (row.status === "Completed") {
@@ -187,7 +191,7 @@ export async function markAsAgreed(input: {
       .select(TXN_SELECT)
       .single();
     if (error) throw error;
-    row = data as TxnJoin;
+    row = data as unknown as TxnJoin;
   }
 
   // Listing status synced by DB trigger (002_transaction_listing_sync.sql)
@@ -264,7 +268,7 @@ export async function fetchMyTransactions(userId: string) {
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return ((data ?? []) as TxnJoin[]).map((row) => mapTxn(row, userId));
+  return ((data ?? []) as unknown as TxnJoin[]).map((row) => mapTxn(row, userId));
 }
 
 export type CarbonImpactSummary = {
