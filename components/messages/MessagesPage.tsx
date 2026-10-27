@@ -31,6 +31,7 @@ import {
 } from "@/components/messages/AttachmentLightbox";
 import { ProfileAvatar } from "@/components/ui/ProfileAvatar";
 import { supabase } from "@/lib/supabase";
+import PayButton from "@/components/payments/PayButton";
 
 export function MessagesPage() {
   const router = useRouter();
@@ -457,6 +458,18 @@ export function MessagesPage() {
       setActing(false);
     }
   }
+    async function refreshTxn() {
+    if (!user || !parties || !active) return;
+    const view = await getPairTransactionView(
+      active.listingId,
+      parties.buyerId,
+      parties.sellerId,
+      user.id
+    );
+    setTxn(view);
+  }
+
+  if (!ready || loading) {
 
   if (!ready || loading) {
     return (
