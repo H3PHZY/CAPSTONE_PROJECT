@@ -71,8 +71,9 @@ export type TransactionRow = {
   seller_id: string;
   status: TransactionStatus;
   completed_at: string | null;
-  payment_ref: string | null;
-  paid_at: string | null;
+  payment_ref?: string | null;
+  paid_at?: string | null;
+  deal_price_ngn?: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -123,23 +124,17 @@ export type Database = {
       };
       classifications: {
         Row: ClassificationRow;
-        Insert: Omit<ClassificationRow, "id" | "created_at" | "updated_at" | "raw_labels"> & {
+        Insert: Omit<ClassificationRow, "id" | "created_at" | "updated_at"> & {
           id?: string;
-          raw_labels?: Record<string, number> | null;
         };
         Update: Partial<ClassificationRow>;
         Relationships: [];
       };
       transactions: {
         Row: TransactionRow;
-        Insert: Omit<
-          TransactionRow,
-          "id" | "created_at" | "updated_at" | "completed_at" | "payment_ref" | "paid_at"
-        > & {
+        Insert: Omit<TransactionRow, "id" | "created_at" | "updated_at" | "completed_at"> & {
           id?: string;
           completed_at?: string | null;
-          payment_ref?: string | null;
-          paid_at?: string | null;
         };
         Update: Partial<TransactionRow>;
         Relationships: [];
@@ -164,4 +159,3 @@ export type Database = {
     };
   };
 };
-
