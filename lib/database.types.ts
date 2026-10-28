@@ -124,8 +124,9 @@ export type Database = {
       };
       classifications: {
         Row: ClassificationRow;
-        Insert: Omit<ClassificationRow, "id" | "created_at" | "updated_at"> & {
+        Insert: Omit<ClassificationRow, "id" | "created_at" | "updated_at" | "raw_labels"> & {
           id?: string;
+          raw_labels?: Record<string, number> | null;
         };
         Update: Partial<ClassificationRow>;
         Relationships: [];

@@ -113,7 +113,7 @@ export async function findTransactionForPair(
     .maybeSingle();
 
   if (error) throw error;
-  return data as TxnJoin | null;
+  return data as unknown as TxnJoin | null;
 }
 
 export async function getPairTransactionView(
@@ -190,7 +190,7 @@ export async function markAsAgreed(input: {
       .select(TXN_SELECT)
       .single();
     if (error) throw error;
-    return mapTxn(data as TxnJoin, input.actorId);
+    return mapTxn(data as unknown as TxnJoin, input.actorId);
   }
 
   if (row.status === "Completed") {
@@ -214,7 +214,7 @@ export async function markAsAgreed(input: {
       .select(TXN_SELECT)
       .single();
     if (error) throw error;
-    row = data as TxnJoin;
+    row = data as unknown as TxnJoin;
   }
 
   // Listing status synced by DB trigger (002_transaction_listing_sync.sql)
@@ -248,10 +248,6 @@ export async function setDealPrice(input: {
   if (row.paid_at) {
     throw new Error("Price cannot change after payment");
   }
-  if (row.status === "Completed") {
-    throw new Error("This exchange is already completed");
-  }
-
   const { data, error } = await supabase
     .from("transactions")
     .update({ deal_price_ngn: amount })
@@ -259,7 +255,7 @@ export async function setDealPrice(input: {
     .select(TXN_SELECT)
     .single();
   if (error) throw error;
-  return mapTxn(data as TxnJoin, input.actorId);
+  return mapTxn(data as unknown as TxnJoin, input.actorId);
 }
 
 export async function markExchangeCompleted(input: {
@@ -342,7 +338,7 @@ export async function fetchTransactionById(id: string, viewerId: string) {
 
   if (error) throw error;
   if (!data) return null;
-  const row = data as TxnJoin;
+  const row = data as unknown as TxnJoin;
   if (row.buyer_id !== viewerId && row.seller_id !== viewerId) return null;
   return mapTxn(row, viewerId);
 }
@@ -355,7 +351,7 @@ export async function fetchMyTransactions(userId: string) {
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return ((data ?? []) as TxnJoin[]).map((row) => mapTxn(row, userId));
+  return ((data ?? []) as unknown as TxnJoin[]).map((row) => mapTxn(row, userId));
 }
 
 export type CarbonImpactSummary = {
