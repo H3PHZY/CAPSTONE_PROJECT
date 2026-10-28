@@ -87,7 +87,7 @@ export async function fetchInbox(userId: string): Promise<MessageThread[]> {
   if (error) throw error;
 
   const threads = new Map<string, MessageThread>();
-  for (const row of (data ?? []) as MessageJoin[]) {
+  for (const row of (data ?? []) as unknown as MessageJoin[]) {
     const otherUserId = row.sender_id === userId ? row.recipient_id : row.sender_id;
     const other = row.sender_id === userId ? row.recipient : row.sender;
     const key = threadKey(row.listing_id, otherUserId);

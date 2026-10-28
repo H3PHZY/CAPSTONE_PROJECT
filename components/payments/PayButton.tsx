@@ -8,7 +8,7 @@ type Props = {
   transactionId: string;
   email: string;
   amountNgn: number;
-  onPaid: () => void | Promise<void>;
+  onPaid: (reference: string) => void | Promise<void>;
   onError: (message: string) => void;
 };
 
@@ -20,11 +20,12 @@ export default function PayButton({
   onError,
 }: Props) {
   const [verifying, setVerifying] = useState(false);
+  const amountKobo = Math.round(amountNgn * 100); // Paystack uses kobo
 
   const initializePayment = usePaystackPayment({
     publicKey: process.env.NEXT_PUBLIC_PAYSTACK_TEST_KEY ?? "",
     email,
-    amount: Math.round(amountNgn * 100), // Paystack uses kobo
+    amount: amountKobo,
     currency: "NGN",
   });
 
@@ -43,7 +44,7 @@ export default function PayButton({
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(json.error || "Payment could not be verified");
-      await onPaid();
+      await onPaid(reference);
     } catch (err) {
       onError(err instanceof Error ? err.message : "Payment verification failed");
     } finally {
@@ -53,7 +54,12 @@ export default function PayButton({
 
   function startPayment() {
     initializePayment({
-      config: { reference: `eco-${transactionId}-${Date.now()}` },
+      config: {
+        reference: `eco-${transactionId}-${Date.now()}`,
+        email,
+        amount: amountKobo,
+        currency: "NGN",
+      },
       onSuccess: (response) => {
         if (response?.reference) void verify(response.reference);
       },
