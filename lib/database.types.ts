@@ -71,6 +71,9 @@ export type TransactionRow = {
   seller_id: string;
   status: TransactionStatus;
   completed_at: string | null;
+  payment_ref?: string | null;
+  paid_at?: string | null;
+  deal_price_ngn?: number | null;
   created_at: string;
   updated_at: string;
 };

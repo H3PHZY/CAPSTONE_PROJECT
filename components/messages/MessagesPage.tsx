@@ -14,6 +14,7 @@ import {
 import {
   fetchInbox,
   fetchThreadMessages,
+  isPaymentNotice,
   resolveListingContact,
   sendMessage,
   type MessageThread,
@@ -22,6 +23,7 @@ import {
   getPairTransactionView,
   markAsAgreed,
   markExchangeCompleted,
+  setDealPrice,
   type TransactionView,
 } from "@/lib/transactions";
 import type { ChatMessage } from "@/lib/types";
@@ -30,6 +32,8 @@ import {
   type AttachmentPreview,
 } from "@/components/messages/AttachmentLightbox";
 import { ProfileAvatar } from "@/components/ui/ProfileAvatar";
+import PayButton from "@/components/payments/PayButton";
+import { formatPriceNgn } from "@/lib/listings";
 import { supabase } from "@/lib/supabase";
 
 export function MessagesPage() {
@@ -47,6 +51,7 @@ export function MessagesPage() {
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [txn, setTxn] = useState<TransactionView | null>(null);
+  const [dealPriceDraft, setDealPriceDraft] = useState("");
   const [replyTo, setReplyTo] = useState<{ id: string; text: string } | null>(null);
   const [attachment, setAttachment] = useState<File | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<string | null>(null);
@@ -112,6 +117,17 @@ export function MessagesPage() {
       current.otherUserId
     );
     setMsgs(rows);
+    const sellerId = current.sellerId;
+    const buyerId = user.id === sellerId ? current.otherUserId : user.id;
+    if (sellerId && buyerId && buyerId !== sellerId) {
+      const view = await getPairTransactionView(
+        current.listingId,
+        buyerId,
+        sellerId,
+        user.id
+      );
+      setTxn(view);
+    }
   }, [user]);
 
   useEffect(() => {
@@ -203,7 +219,14 @@ export function MessagesPage() {
         recipient_id?: string;
         listing_id?: string;
       };
-      if (row.sender_id !== user.id && row.recipient_id !== user.id) return;
+      const hasParties = Boolean(row.sender_id || row.recipient_id);
+      if (
+        hasParties &&
+        row.sender_id !== user.id &&
+        row.recipient_id !== user.id
+      ) {
+        return;
+      }
 
       if (debounce) clearTimeout(debounce);
       debounce = setTimeout(() => {
@@ -211,11 +234,13 @@ export function MessagesPage() {
           try {
             const inbox = await reloadInbox();
             const current = activeRef.current;
+            const listingId = row.listing_id ? String(row.listing_id) : "";
 
             // First message on a "new" pending contact → promote to real thread
             if (
               current?.key.startsWith("new:") &&
-              row.listing_id === current.listingId
+              listingId &&
+              listingId === current.listingId
             ) {
               const match = inbox.find(
                 (t) =>
@@ -228,16 +253,9 @@ export function MessagesPage() {
               }
             }
 
-            if (
-              current &&
-              !current.key.startsWith("new:") &&
-              row.listing_id === current.listingId &&
-              (row.sender_id === current.otherUserId ||
-                row.recipient_id === current.otherUserId ||
-                row.sender_id === user.id ||
-                row.recipient_id === user.id)
-            ) {
-              await refreshActiveThread();
+            if (current && !current.key.startsWith("new:")) {
+              const sameListing = !listingId || listingId === current.listingId;
+              if (sameListing) await refreshActiveThread();
             }
           } catch {
             // Keep last good UI; next event can retry
@@ -277,10 +295,52 @@ export function MessagesPage() {
   }, [user, reloadInbox, refreshActiveThread]);
 
   useEffect(() => {
+    if (!user || !txn?.id || txn.status !== "Reserved" || txn.paidAt) return;
+
+    const channel = supabase
+      .channel(`deal-pay:${txn.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "transactions",
+          filter: `id=eq.${txn.id}`,
+        },
+        () => {
+          void refreshActiveThread();
+        }
+      )
+      .subscribe();
+
+    const poll = window.setInterval(() => {
+      void refreshActiveThread();
+    }, 2500);
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshActiveThread();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+
+    return () => {
+      window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+      void supabase.removeChannel(channel);
+    };
+  }, [user, txn?.id, txn?.status, txn?.paidAt, refreshActiveThread]);
+
+  useEffect(() => {
     const el = msgsBodyRef.current;
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [msgs.length, active?.key]);
+
+  useEffect(() => {
+    const amount = txn?.priceNgn;
+    setDealPriceDraft(amount && amount > 0 ? String(Math.round(amount)) : "");
+  }, [txn?.id, txn?.priceNgn]);
 
   useEffect(() => {
     if (!user || !parties || !active) {
@@ -458,6 +518,53 @@ export function MessagesPage() {
     }
   }
 
+  async function refreshTxn() {
+    if (!user || !parties || !active) return;
+    const view = await getPairTransactionView(
+      active.listingId,
+      parties.buyerId,
+      parties.sellerId,
+      user.id
+    );
+    setTxn(view);
+  }
+
+  async function onSetDealPrice() {
+    if (!user || !parties || !active) return;
+    setActing(true);
+    setError(null);
+    try {
+      const amount = Number(dealPriceDraft.replace(/,/g, ""));
+      const view = await setDealPrice({
+        listingId: active.listingId,
+        buyerId: parties.buyerId,
+        sellerId: parties.sellerId,
+        actorId: user.id,
+        priceNgn: amount,
+      });
+      setTxn(view);
+      await sendMessage({
+        listingId: active.listingId,
+        senderId: user.id,
+        recipientId: active.otherUserId,
+        body: `Asking price for this exchange · ₦${formatPriceNgn(view.priceNgn)}`,
+      });
+      await reloadInbox();
+      await refreshActiveThread();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update the price");
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function onPaid(_reference: string) {
+    setError(null);
+    await refreshTxn();
+    await reloadInbox();
+    await refreshActiveThread();
+  }
+
   if (!ready || loading) {
     return (
       <div className="page-shell page-shell--msgs">
@@ -487,9 +594,13 @@ export function MessagesPage() {
 
   const status = txn?.status;
   const isSeller = Boolean(user && active && user.id === active.sellerId);
+  const isBuyer = Boolean(user && parties && user.id === parties.buyerId);
+  const priceNgn = txn?.priceNgn ?? 0;
+  const priced = priceNgn > 0;
+  const paid = Boolean(txn?.paidAt);
   const canAgree =
     isSeller && Boolean(parties) && status !== "Reserved" && status !== "Completed";
-  const canComplete = Boolean(parties) && status === "Reserved";
+  const canComplete = Boolean(parties) && status === "Reserved" && (!priced || paid);
 
   return (
     <div className="page-shell page-shell--msgs">
@@ -545,7 +656,7 @@ export function MessagesPage() {
           {!pendingContact && threads.length === 0 ? (
             <div className="thread-row">
               <div className="thread-preview">
-                No conversations yet. Open a listing and tap Initiate contact.
+                No conversations yet. Open a listing and select Contact seller.
               </div>
             </div>
           ) : null}
@@ -568,6 +679,7 @@ export function MessagesPage() {
                       {active.listingTitle}
                       {status ? ` · ${status}` : ""}
                       {txn?.co2eKg != null ? ` · ${txn.co2eKg} kg CO₂e` : ""}
+                      {paid ? " · Paid" : ""}
                     </div>
                   </div>
                 </div>
@@ -578,6 +690,11 @@ export function MessagesPage() {
                   >
                     View listing
                   </Link>
+                  {txn ? (
+                    <Link href={`/transactions/${txn.id}`} className="btn btn-outline btn-sm">
+                      Transaction
+                    </Link>
+                  ) : null}
                   {canAgree ? (
                     <button
                       type="button"
@@ -601,13 +718,100 @@ export function MessagesPage() {
                     <button type="button" className="btn btn-primary btn-sm" disabled>
                       Completed
                     </button>
+                  ) : status === "Reserved" && priced && !paid ? (
+                    <button type="button" className="btn btn-outline btn-sm" disabled>
+                      {isBuyer ? "Pay below to complete" : "Waiting for payment"}
+                    </button>
                   ) : null}
                 </div>
               </div>
 
-              {status === "Reserved" ? (
-                <div className="msgs-pay-hint">
-                  Reserved — share bank details and payment proof in this chat, then mark completed.
+              {status === "Reserved" && txn ? (
+                <div
+                  className={
+                    paid
+                      ? "deal-pay deal-pay--paid"
+                      : isSeller && !paid
+                        ? "deal-pay deal-pay--edit"
+                        : "deal-pay"
+                  }
+                >
+                  <div className="deal-pay-copy">
+                    <div className="deal-pay-kicker">
+                      {paid ? "PAID" : "PRICE FOR THIS BUYER"}
+                    </div>
+                    <div className="deal-pay-amount">
+                      {priced ? `₦${formatPriceNgn(priceNgn)}` : "Not set"}
+                    </div>
+                    {txn.listingPriceNgn != null &&
+                    txn.listingPriceNgn > 0 &&
+                    priced &&
+                    Math.round(txn.listingPriceNgn) !== Math.round(priceNgn) ? (
+                      <div className="deal-pay-list-ask">
+                        Listing asking ₦{formatPriceNgn(txn.listingPriceNgn)}
+                      </div>
+                    ) : null}
+                    <p className="deal-pay-note">
+                      {paid
+                        ? "Payment confirmed. You can mark the exchange as complete."
+                        : isSeller
+                          ? "Set the amount this buyer should pay — the full listing, or a lower figure if they take only part of the lot."
+                          : priced
+                            ? "This lot is reserved. Pay the agreed amount to confirm the exchange."
+                            : "Waiting for the seller to set a price for this exchange."}
+                    </p>
+                    {isSeller && !paid ? (
+                      <form
+                        className="deal-pay-form"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          void onSetDealPrice();
+                        }}
+                      >
+                        <span className="deal-pay-naira">₦</span>
+                        <input
+                          className="input deal-pay-input"
+                          inputMode="numeric"
+                          value={dealPriceDraft}
+                          onChange={(e) =>
+                            setDealPriceDraft(e.target.value.replace(/[^\d]/g, ""))
+                          }
+                          placeholder={
+                            txn.listingPriceNgn && txn.listingPriceNgn > 0
+                              ? String(Math.round(txn.listingPriceNgn))
+                              : "Amount"
+                          }
+                          aria-label="Price for this buyer"
+                        />
+                        <button
+                          type="submit"
+                          className="btn btn-outline btn-sm"
+                          disabled={acting}
+                        >
+                          Update price
+                        </button>
+                      </form>
+                    ) : null}
+                  </div>
+                  {paid ? (
+                    <div className="deal-pay-badge">Confirmed</div>
+                  ) : isBuyer && priced ? (
+                    user.email ? (
+                      <PayButton
+                        transactionId={txn.id}
+                        email={user.email}
+                        amountNgn={priceNgn}
+                        onPaid={(ref) => void onPaid(ref)}
+                        onError={setError}
+                      />
+                    ) : (
+                      <div className="deal-pay-wait">Email required to pay</div>
+                    )
+                  ) : isBuyer ? (
+                    <div className="deal-pay-wait">Awaiting price</div>
+                  ) : priced ? (
+                    <div className="deal-pay-wait">Awaiting buyer</div>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -615,15 +819,31 @@ export function MessagesPage() {
                 <div className="msgs-day">CONVERSATION</div>
                 {msgs.length === 0 ? (
                   <div className="thread-preview" style={{ padding: "12px 16px" }}>
-                    Say hello — ask if the material is still available or propose a pickup.
+                    Confirm availability, agree a pickup window, then reserve the lot to pay.
                   </div>
                 ) : null}
-                {msgs.map((m, i) => (
+                {msgs.map((m, i) => {
+                  const payNotice = isPaymentNotice(m.text);
+                  return (
                   <div
                     key={m.id || `${m.time}-${i}-${m.text.slice(0, 12)}`}
-                    className={m.me ? "msg-row msg-row--me" : "msg-row"}
+                    className={
+                      payNotice
+                        ? "msg-row msg-row--pay"
+                        : m.me
+                          ? "msg-row msg-row--me"
+                          : "msg-row"
+                    }
                   >
-                    <div className={m.me ? "msg-bubble msg-bubble--me" : "msg-bubble"}>
+                    <div
+                      className={
+                        payNotice
+                          ? "msg-bubble msg-bubble--pay"
+                          : m.me
+                            ? "msg-bubble msg-bubble--me"
+                            : "msg-bubble"
+                      }
+                    >
                       {m.replyText ? (
                         <div className="msg-quote">{m.replyText}</div>
                       ) : null}
@@ -667,10 +887,14 @@ export function MessagesPage() {
                         <div className="msg-text">{m.text}</div>
                       ) : null}
                       <div className="msg-foot">
-                        <span className={m.me ? "msg-meta msg-meta--me" : "msg-meta"}>
+                        <span
+                          className={
+                            payNotice || !m.me ? "msg-meta" : "msg-meta msg-meta--me"
+                          }
+                        >
                           {m.time}
                         </span>
-                        {m.id ? (
+                        {m.id && !payNotice ? (
                           <button
                             type="button"
                             className="msg-reply"
@@ -690,7 +914,8 @@ export function MessagesPage() {
                       </div>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
 
               <div className="msgs-composer">

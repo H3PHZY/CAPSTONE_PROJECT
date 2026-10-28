@@ -11,11 +11,15 @@ export type TransactionView = {
   sellerId: string;
   status: TransactionStatus;
   completedAt: string | null;
+  paidAt: string | null;
+  paymentRef: string | null;
   createdAt: string;
   listingTitle: string;
   material: MaterialCategory;
   weightKg: number;
   priceNgn: number | null;
+  listingPriceNgn: number | null;
+  dealPriceNgn: number | null;
   counterpartyName: string;
   co2eKg: number | null;
 };
@@ -27,6 +31,9 @@ type TxnJoin = {
   seller_id: string;
   status: TransactionStatus;
   completed_at: string | null;
+  payment_ref?: string | null;
+  paid_at?: string | null;
+  deal_price_ngn?: number | null;
   created_at: string;
   listing?: {
     id: string;
@@ -54,6 +61,13 @@ const TXN_SELECT = `
   carbon_records ( co2e_kg )
 `;
 
+function effectivePriceNgn(row: TxnJoin): number | null {
+  if (row.deal_price_ngn != null && Number(row.deal_price_ngn) > 0) {
+    return Number(row.deal_price_ngn);
+  }
+  return row.listing?.price_ngn ?? null;
+}
+
 function carbonOf(row: TxnJoin): number | null {
   const raw = row.carbon_records;
   if (!raw) return null;
@@ -71,11 +85,15 @@ function mapTxn(row: TxnJoin, viewerId: string): TransactionView {
     sellerId: row.seller_id,
     status: row.status,
     completedAt: row.completed_at,
+    paidAt: row.paid_at ?? null,
+    paymentRef: row.payment_ref ?? null,
     createdAt: row.created_at,
     listingTitle: row.listing?.title || "Listing",
     material: (row.listing?.material || "Metal") as MaterialCategory,
     weightKg: Number(row.listing?.weight_kg || 0),
-    priceNgn: row.listing?.price_ngn ?? null,
+    listingPriceNgn: row.listing?.price_ngn ?? null,
+    dealPriceNgn: row.deal_price_ngn ?? null,
+    priceNgn: effectivePriceNgn(row),
     counterpartyName: counterparty?.business_name || "EcoLoop user",
     co2eKg: carbonOf(row),
   };
@@ -124,7 +142,7 @@ export async function markAsAgreed(input: {
 
   const { data: listing, error: listingError } = await supabase
     .from("listings")
-    .select("id, status, seller_id")
+    .select("id, status, seller_id, price_ngn")
     .eq("id", input.listingId)
     .maybeSingle();
   if (listingError) throw listingError;
@@ -157,6 +175,8 @@ export async function markAsAgreed(input: {
     input.sellerId
   );
 
+  const listingAsk = Number(listing.price_ngn ?? 0);
+
   if (!row) {
     const { data, error } = await supabase
       .from("transactions")
@@ -165,6 +185,7 @@ export async function markAsAgreed(input: {
         buyer_id: input.buyerId,
         seller_id: input.sellerId,
         status: "Reserved",
+        deal_price_ngn: listingAsk > 0 ? listingAsk : null,
       })
       .select(TXN_SELECT)
       .single();
@@ -180,9 +201,15 @@ export async function markAsAgreed(input: {
   }
 
   if (row.status !== "Reserved") {
+    const patch: { status: "Reserved"; deal_price_ngn?: number } = {
+      status: "Reserved",
+    };
+    if (!(Number(row.deal_price_ngn) > 0) && listingAsk > 0) {
+      patch.deal_price_ngn = listingAsk;
+    }
     const { data, error } = await supabase
       .from("transactions")
-      .update({ status: "Reserved" })
+      .update(patch)
       .eq("id", row.id)
       .select(TXN_SELECT)
       .single();
@@ -192,6 +219,47 @@ export async function markAsAgreed(input: {
 
   // Listing status synced by DB trigger (002_transaction_listing_sync.sql)
   return mapTxn(row, input.actorId);
+}
+
+export async function setDealPrice(input: {
+  listingId: string;
+  buyerId: string;
+  sellerId: string;
+  actorId: string;
+  priceNgn: number;
+}) {
+  if (input.actorId !== input.sellerId) {
+    throw new Error("Only the seller can set the price for this buyer");
+  }
+  const amount = Math.round(Number(input.priceNgn));
+  if (!(amount > 0)) {
+    throw new Error("Enter a price greater than zero");
+  }
+
+  const row = await findTransactionForPair(
+    input.listingId,
+    input.buyerId,
+    input.sellerId
+  );
+  if (!row) throw new Error("Reserve this buyer first, then set a price");
+  if (row.status !== "Reserved") {
+    throw new Error("Reserve this buyer before setting a deal price");
+  }
+  if (row.paid_at) {
+    throw new Error("Price cannot change after payment");
+  }
+  if (row.status === "Completed") {
+    throw new Error("This exchange is already completed");
+  }
+
+  const { data, error } = await supabase
+    .from("transactions")
+    .update({ deal_price_ngn: amount })
+    .eq("id", row.id)
+    .select(TXN_SELECT)
+    .single();
+  if (error) throw error;
+  return mapTxn(data as TxnJoin, input.actorId);
 }
 
 export async function markExchangeCompleted(input: {
@@ -214,6 +282,11 @@ export async function markExchangeCompleted(input: {
   if (row.status === "Completed") return mapTxn(row, input.actorId);
   if (row.status === "Cancelled") {
     throw new Error("This exchange was cancelled");
+  }
+
+  const priceNgn = Number(effectivePriceNgn(row) ?? 0);
+  if (priceNgn > 0 && !row.paid_at) {
+    throw new Error("Wait for payment to confirm before marking this exchange completed");
   }
 
   const material = (row.listing?.material || "Metal") as MaterialCategory;
@@ -254,6 +327,24 @@ export async function markExchangeCompleted(input: {
   );
   if (!refreshed) throw new Error("Transaction updated but could not reload");
   return mapTxn(refreshed, input.actorId);
+}
+
+export function transactionRef(id: string) {
+  return `ECL-${id.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
+}
+
+export async function fetchTransactionById(id: string, viewerId: string) {
+  const { data, error } = await supabase
+    .from("transactions")
+    .select(TXN_SELECT)
+    .eq("id", id)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+  const row = data as TxnJoin;
+  if (row.buyer_id !== viewerId && row.seller_id !== viewerId) return null;
+  return mapTxn(row, viewerId);
 }
 
 export async function fetchMyTransactions(userId: string) {

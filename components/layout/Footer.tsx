@@ -28,6 +28,7 @@ export function Footer() {
             <div className="site-footer-links">
               <Link href="/marketplace">Marketplace</Link>
               <Link href="/listings/new">List a material</Link>
+              <Link href="/transactions">Transactions</Link>
               <Link href="/impact">Carbon methodology</Link>
             </div>
           </div>
@@ -36,7 +37,7 @@ export function Footer() {
             <div className="site-footer-col-label">PILOT</div>
             <div className="site-footer-links">
               <button type="button" className="site-footer-link-btn" onClick={() => openAuth("signup")}>
-                Join the pilot
+                Create an account
               </button>
               <Link href="/marketplace">For buyers &amp; recyclers</Link>
               <a href="mailto:research@ecoloop.ng">Contact the research team</a>

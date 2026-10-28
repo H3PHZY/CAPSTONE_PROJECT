@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { fetchMyListings } from "@/lib/listings";
+import { fetchLiveListings, fetchMyListings } from "@/lib/listings";
 import { fetchCarbonImpact, fetchMyTransactions } from "@/lib/transactions";
-import { PULSE } from "@/lib/data";
+import { CATS } from "@/lib/data";
 
 export function DashboardPage() {
   const { prefs, profile, user, ready } = useAuth();
@@ -13,25 +13,40 @@ export function DashboardPage() {
   const [co2, setCo2] = useState(0);
   const [exchanges, setExchanges] = useState(0);
   const [activity, setActivity] = useState<
-    { t: string; s: string; time: string; dot: string }[]
+    { id: string; t: string; s: string; time: string; dot: string }[]
   >([]);
+  const [pulse, setPulse] = useState<{ label: string; note: string; pct: number }[]>([]);
 
   useEffect(() => {
     if (!ready || !user) return;
     let alive = true;
     void (async () => {
       try {
-        const [mine, impact, txns] = await Promise.all([
+        const [mine, impact, txns, live] = await Promise.all([
           fetchMyListings(user.id),
           fetchCarbonImpact(user.id),
           fetchMyTransactions(user.id),
+          fetchLiveListings().catch(() => []),
         ]);
         if (!alive) return;
         setLiveCount(mine.filter((m) => m.status === "Live").length);
+        const counts = CATS.map((cat) => ({
+          label: cat,
+          n: live.filter((row) => row.material === cat).length,
+        }));
+        const max = Math.max(1, ...counts.map((c) => c.n));
+        setPulse(
+          counts.map((c) => ({
+            label: c.label,
+            note: c.n === 0 ? "None live" : `${c.n} live`,
+            pct: Math.round((c.n / max) * 100),
+          }))
+        );
         setCo2(impact.totalCo2eKg);
         setExchanges(impact.completedCount);
         setActivity(
           txns.slice(0, 5).map((t) => ({
+            id: t.id,
             t: `${t.status}: ${t.listingTitle}`,
             s: `${t.counterpartyName} · ${t.material}`,
             time: new Date(t.createdAt).toLocaleTimeString("en-GB", {
@@ -55,7 +70,7 @@ export function DashboardPage() {
     };
   }, [ready, user]);
 
-  const name = profile?.business_name || "there";
+  const name = profile?.business_name?.trim() || null;
   const goal = 3000;
   const pct = Math.min(100, Math.round((co2 / goal) * 100));
 
@@ -63,7 +78,7 @@ export function DashboardPage() {
     <div className="page-shell page-shell--wide">
       <div className="page-head">
         <div>
-          <h1 className="page-title">Welcome, {name}</h1>
+          <h1 className="page-title">{name ? `Welcome, ${name}` : "Welcome"}</h1>
           <div className="page-sub">
             {profile?.cluster || "Ogba"} · {liveCount} listing{liveCount === 1 ? "" : "s"}{" "}
             live
@@ -132,19 +147,19 @@ export function DashboardPage() {
             </div>
           ) : (
             activity.map((a) => (
-              <div key={`${a.t}-${a.time}`} className="activity-row">
+              <Link key={a.id} href={`/transactions/${a.id}`} className="activity-row">
                 <div className="activity-dot" style={{ background: a.dot }} />
                 <div className="activity-body">
                   <div className="activity-title">{a.t}</div>
                   <div className="activity-sub">{a.s}</div>
                 </div>
                 <div className="activity-time">{a.time}</div>
-              </div>
+              </Link>
             ))
           )}
           <div className="panel-foot">
-            <Link href="/messages" className="btn btn-outline btn-sm">
-              Open messages
+            <Link href="/transactions" className="btn btn-outline btn-sm">
+              All transactions
             </Link>
           </div>
         </div>
@@ -164,7 +179,7 @@ export function DashboardPage() {
             </div>
             <div className="impact-snap-meta">
               <span>
-                {pct}% of your {goal.toLocaleString()} kg pilot goal
+                {pct}% of your {goal.toLocaleString()} kg diversion goal
               </span>
               <span>
                 {exchanges} exchange{exchanges === 1 ? "" : "s"}
@@ -178,9 +193,9 @@ export function DashboardPage() {
           </div>
 
           <div className="panel panel--pad">
-            <div className="panel-label">CLUSTER PULSE · THIS WEEK</div>
+            <div className="panel-label">MARKETPLACE MIX · LIVE LOTS</div>
             <div className="pulse-list">
-              {PULSE.map((p) => (
+              {pulse.map((p) => (
                 <div key={p.label}>
                   <div className="pulse-row">
                     <div className="pulse-label">{p.label}</div>
@@ -196,7 +211,7 @@ export function DashboardPage() {
               ))}
             </div>
             <div className="panel-hint">
-              Demand index by stream — illustrative cluster pulse for the pilot UI.
+              Share of live listings by material stream in the cluster.
             </div>
           </div>
         </div>

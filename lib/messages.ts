@@ -49,6 +49,10 @@ function formatTime(iso: string): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
+export function isPaymentNotice(text: string) {
+  return /payment received|paystack confirmed|asking price for this exchange/i.test(text);
+}
+
 function threadKey(listingId: string, otherUserId: string) {
   return `${listingId}:${otherUserId}`;
 }

@@ -34,8 +34,6 @@ export function QuickListingPage() {
   const { user, isAuthenticated, openAuth } = useAuth();
   const [stage, setStage] = useState<Stage>("idle");
   const [scanPct, setScanPct] = useState(0);
-  const [seconds, setSeconds] = useState(0);
-  const [timing, setTiming] = useState(false);
   const [aiLabel, setAiLabel] = useState<MaterialCategory>("Metal");
   const [aiConfidence, setAiConfidence] = useState(0);
   const [aiAlts, setAiAlts] = useState<AiAlt[]>([]);
@@ -62,12 +60,6 @@ export function QuickListingPage() {
   const previewObjectUrl = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!timing || published) return;
-    const iv = setInterval(() => setSeconds((s) => s + 1), 1000);
-    return () => clearInterval(iv);
-  }, [timing, published]);
-
-  useEffect(() => {
     return () => {
       if (scanRef.current) clearInterval(scanRef.current);
       if (doneRef.current) clearTimeout(doneRef.current);
@@ -76,9 +68,6 @@ export function QuickListingPage() {
   }, []);
 
   const activeStep = published ? 2 : stage === "done" ? 1 : 0;
-  const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
-  const ss = String(seconds % 60).padStart(2, "0");
-  const timer = `${mm}:${ss}`;
   const previewCo2 = co2FromWeight(parseFloat(weight) || 0, override).toLocaleString();
   const displayPhoto = photoUrl ?? previewUrl;
 
@@ -93,7 +82,6 @@ export function QuickListingPage() {
     clearScanTimers();
     setStage("scanning");
     setScanPct(0);
-    setTiming(true);
     // Visual progress only — stage becomes "done" when upload finishes.
     scanRef.current = setInterval(() => {
       setScanPct((prev) => Math.min(92, prev + 7 + Math.random() * 8));
@@ -233,8 +221,6 @@ export function QuickListingPage() {
     clearScanTimers();
     setStage("idle");
     setScanPct(0);
-    setSeconds(0);
-    setTiming(false);
     setPublished(false);
     setOverridden(false);
     setOverride("Metal");
@@ -295,7 +281,6 @@ export function QuickListingPage() {
       });
       setPublishedId(listing.id);
       setPublished(true);
-      setTiming(false);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Could not publish listing.");
     } finally {
@@ -319,11 +304,6 @@ export function QuickListingPage() {
           <h1 className="page-title">List surplus material</h1>
           <div className="page-sub">Three steps · photo, confirm, publish</div>
         </div>
-        <div className="timer-chip">
-          <span className="timer-chip-label">ELAPSED</span>
-          <span className="timer-chip-value">{timer}</span>
-          <span className="timer-chip-hint">/ 60s target</span>
-        </div>
       </div>
 
       <div className="steps-bar">
@@ -344,7 +324,7 @@ export function QuickListingPage() {
       {published ? (
         <div className="publish-success">
           <div className="publish-check">✓</div>
-          <h2 className="publish-title">Listing published in {timer}</h2>
+          <h2 className="publish-title">Listing published</h2>
           <p className="publish-copy">
             Your material is now visible to 9 verified buyers within 10 km of {pickup}. You will
             be notified the moment a buyer initiates contact.
@@ -388,7 +368,7 @@ export function QuickListingPage() {
               >
                 <div className="upload-icon">↑</div>
                 <div className="upload-copy">
-                  <div className="upload-title">Drag a photo here, or tap to capture</div>
+                  <div className="upload-title">Drag a photo here, or choose a file</div>
                   <div className="upload-sub">
                     JPG or PNG up to 8 MB · one clear shot of the pile is enough
                   </div>
@@ -572,7 +552,7 @@ export function QuickListingPage() {
                     onChange={setPickup}
                     aria-label="Pickup location"
                   />
-                  <div className="field-foot">Saved from your profile · tap to change</div>
+                  <div className="field-foot">Saved from your profile · select to change</div>
                 </div>
               </div>
             </div>
