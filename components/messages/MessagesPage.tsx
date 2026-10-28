@@ -32,7 +32,11 @@ import {
   type AttachmentPreview,
 } from "@/components/messages/AttachmentLightbox";
 import { ProfileAvatar } from "@/components/ui/ProfileAvatar";
-import PayButton from "@/components/payments/PayButton";
+import dynamic from "next/dynamic";
+
+const PayButton = dynamic(() => import("@/components/payments/PayButton"), {
+  ssr: false,
+});
 import { formatPriceNgn } from "@/lib/listings";
 import { supabase } from "@/lib/supabase";
 
