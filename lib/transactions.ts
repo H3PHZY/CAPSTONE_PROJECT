@@ -132,92 +132,19 @@ export async function markAsAgreed(input: {
   sellerId: string;
   actorId: string;
 }) {
-  if (input.buyerId === input.sellerId) {
-    throw new Error("Buyer and seller must be different users");
-  }
-  // Only the seller reserves the lot — they choose which buyer gets it.
-  if (input.actorId !== input.sellerId) {
-    throw new Error("Only the seller can mark a deal as agreed");
-  }
+  const { error } = await supabase.rpc("reserve_listing_for_buyer", {
+    p_listing_id: input.listingId,
+    p_buyer_id: input.buyerId,
+    p_seller_id: input.sellerId,
+  });
+  if (error) throw error;
 
-  const { data: listing, error: listingError } = await supabase
-    .from("listings")
-    .select("id, status, seller_id, price_ngn")
-    .eq("id", input.listingId)
-    .maybeSingle();
-  if (listingError) throw listingError;
-  if (!listing || listing.seller_id !== input.sellerId) {
-    throw new Error("Listing not found");
-  }
-  if (listing.status === "Sold") {
-    throw new Error("This listing is already sold");
-  }
-
-  // Another buyer already holds this lot
-  const { data: otherHold, error: holdError } = await supabase
-    .from("transactions")
-    .select("id, buyer_id, status")
-    .eq("listing_id", input.listingId)
-    .in("status", ["Reserved", "Completed"])
-    .neq("buyer_id", input.buyerId)
-    .limit(1)
-    .maybeSingle();
-  if (holdError) throw holdError;
-  if (otherHold) {
-    throw new Error(
-      "This listing is already reserved for another buyer. Complete or cancel that deal first."
-    );
-  }
-
-  let row = await findTransactionForPair(
+  const row = await findTransactionForPair(
     input.listingId,
     input.buyerId,
     input.sellerId
   );
-
-  const listingAsk = Number(listing.price_ngn ?? 0);
-
-  if (!row) {
-    const { data, error } = await supabase
-      .from("transactions")
-      .insert({
-        listing_id: input.listingId,
-        buyer_id: input.buyerId,
-        seller_id: input.sellerId,
-        status: "Reserved",
-        deal_price_ngn: listingAsk > 0 ? listingAsk : null,
-      })
-      .select(TXN_SELECT)
-      .single();
-    if (error) throw error;
-    return mapTxn(data as unknown as TxnJoin, input.actorId);
-  }
-
-  if (row.status === "Completed") {
-    throw new Error("This exchange is already completed");
-  }
-  if (row.status === "Cancelled") {
-    throw new Error("This exchange was cancelled");
-  }
-
-  if (row.status !== "Reserved") {
-    const patch: { status: "Reserved"; deal_price_ngn?: number } = {
-      status: "Reserved",
-    };
-    if (!(Number(row.deal_price_ngn) > 0) && listingAsk > 0) {
-      patch.deal_price_ngn = listingAsk;
-    }
-    const { data, error } = await supabase
-      .from("transactions")
-      .update(patch)
-      .eq("id", row.id)
-      .select(TXN_SELECT)
-      .single();
-    if (error) throw error;
-    row = data as unknown as TxnJoin;
-  }
-
-  // Listing status synced by DB trigger (002_transaction_listing_sync.sql)
+  if (!row) throw new Error("Reservation succeeded but could not reload the deal");
   return mapTxn(row, input.actorId);
 }
 
@@ -264,7 +191,7 @@ export async function markExchangeCompleted(input: {
   sellerId: string;
   actorId: string;
 }) {
-  let row = await findTransactionForPair(
+  const row = await findTransactionForPair(
     input.listingId,
     input.buyerId,
     input.sellerId

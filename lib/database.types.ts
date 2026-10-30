@@ -73,6 +73,8 @@ export type TransactionRow = {
   completed_at: string | null;
   payment_ref?: string | null;
   paid_at?: string | null;
+  pending_payment_ref?: string | null;
+  pending_payment_expires_at?: string | null;
   deal_price_ngn?: number | null;
   created_at: string;
   updated_at: string;
@@ -105,7 +107,37 @@ export type MessageRow = {
 export type Database = {
   public: {
     Views: {};
-    Functions: {};
+    Functions: {
+      reserve_listing_for_buyer: {
+        Args: {
+          p_listing_id: string;
+          p_buyer_id: string;
+          p_seller_id: string;
+        };
+        Returns: undefined;
+      };
+      issue_payment_reference: {
+        Args: {
+          p_transaction_id: string;
+          p_buyer_id: string;
+          p_reference: string;
+          p_expires_at: string;
+        };
+        Returns: {
+          payment_reference: string;
+          amount_kobo: number;
+        }[];
+      };
+      confirm_paystack_payment: {
+        Args: {
+          p_transaction_id: string;
+          p_buyer_id: string;
+          p_reference: string;
+          p_amount_kobo: number;
+        };
+        Returns: undefined;
+      };
+    };
     Tables: {
       profiles: {
         Row: ProfileRow;

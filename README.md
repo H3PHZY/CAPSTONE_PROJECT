@@ -18,7 +18,7 @@ A seller takes a photo of their surplus material. An AI model classifies it (Pla
 - Quick listing flow: upload photo, AI classification with manual override, publish
 - Marketplace with search, material filters, distance filter, and verified sellers
 - Messaging between buyer and seller, with file attachments and live updates
-- Transactions: interest, reserved, completed
+- Transactions: interest, reserved, completed, with automated Paystack payment confirmation
 - Carbon impact tracking and a dashboard
 - My listings page with manage, edit, add photos, and delete
 
@@ -38,9 +38,9 @@ A seller takes a photo of their surplus material. An AI model classifies it (Pla
 
 ### Scope of this MVP
 
-**In scope:** auth, profiles, listings, AI classification with override, marketplace filters, messages, transactions, carbon impact.
+**In scope:** auth, profiles, listings, AI classification with override, marketplace filters, messages, transactions and Paystack payments, carbon impact.
 
-**Out of scope (later/considering):** in-app payments, logistics partners, smart pricing, a chatbot, and training a custom model from scratch. After a lot is reserved, buyer and seller share payment details and proof in Messages, then mark the exchange completed.
+**Out of scope (later/considering):** logistics partners, smart pricing, a chatbot, and training a custom model from scratch. After a lot is reserved and priced, the buyer pays through Paystack; payment is verified automatically before the exchange can be marked complete.
 
 ### How the AI classification works
 
@@ -74,7 +74,7 @@ npm install
 ### 3. Set up Supabase
 
 1. Create a new project on supabase.com.
-2. Open **SQL Editor** and run each file in `supabase/migrations/` in number order, from `001` to `013`.
+2. Open **SQL Editor** and run each file in `supabase/migrations/` in number order, from `001` to `016`.
 3. Open **Table Editor** and check that these tables exist: `profiles`, `listings`, `classifications`, `transactions`, `carbon_records`, `messages`.
 4. Open **Storage** and check that these buckets exist: `listing-photos`, `message-attachments`, `profile-avatars`.
 5. Open **Project Settings, API** and copy the Project URL and the anon key.
@@ -88,9 +88,11 @@ Copy the example file:
 NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 PROJECT_URL=https://YOUR_PROJECT_REF.supabase.co
+NEXT_PUBLIC_PAYSTACK_TEST_KEY=pk_test_your_public_key
+PAYSTACK_SECRET_KEY=sk_test_your_secret_key
 
 # Server-only (never expose to the browser)
-# SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 
 # Hugging Face — yangy50/garbage-classification
 # https://huggingface.co/yangy50/garbage-classification
@@ -107,6 +109,9 @@ HF_MODEL_ID=yangy50/garbage-classification
 | `NEXT_PUBLIC_SUPABASE_URL` | My Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | My Supabase anon (public) key |
 | `PROJECT_URL` | Same as the Supabase URL, used to check image URLs on the server |
+| `NEXT_PUBLIC_PAYSTACK_TEST_KEY` | Paystack public test key used by the checkout modal |
+| `PAYSTACK_SECRET_KEY` | Paystack secret test key used by the server to verify payments |
+| `SUPABASE_SERVICE_ROLE_KEY` | Server-only Supabase key used by payment API routes |
 | `HF_TOKEN` | My Hugging Face access token |
 | `HF_MODEL_ID` | `yangy50/garbage-classification` |
 
@@ -141,7 +146,7 @@ Open http://localhost:3000, create an account, and you are ready to test.
 app/                   Pages (App Router), API route, global styles
 components/            UI by area: home, dashboard, marketplace, listings, messages, profile
 lib/                   Supabase client, listings, messages, transactions, classify, carbon helpers
-supabase/migrations/   SQL files that build the database (001 to 013)
+supabase/migrations/   SQL files that build the database (001 to 016)
 public/assets/         Logo and sample listing images
 docs/                  Screenshots and designs
 ```
