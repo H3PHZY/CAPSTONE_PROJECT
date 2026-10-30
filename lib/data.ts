@@ -34,7 +34,7 @@ export const RADII: Record<RadiusOption, number> = {
 export const FAQS: Faq[] = [
   {
     q: "Is it free to list?",
-    a: "Yes. Listing, classification and messaging are free for the full six-week pilot. There is no commission. Buyers and sellers agree price and share bank details or payment proof in chat.",
+    a: "Yes. Listing, classification and messaging are free for the full six-week pilot, with no commission. Once a deal is reserved and priced, buyers pay securely through Paystack; EcoLoop confirms payment automatically before the exchange can be completed.",
   },
   {
     q: "How accurate is the AI classification?",
@@ -167,7 +167,7 @@ export const THREADS: Thread[] = [
     name: "Loop Recyclers",
     subject: "ECL-0141 · Aluminium offcuts",
     time: "12:12",
-    preview: "Agreed. Sending the transfer reference now…",
+    preview: "Agreed. I will pay through the Paystack checkout…",
   },
   {
     name: "Alafia Packaging",
@@ -207,12 +207,12 @@ export const INITIAL_MSGS: ChatMessage[] = [
   },
   {
     me: true,
-    text: "That works. Gate opens 8am, ask for Tunde at the loading bay. Payment on collection by transfer.",
+    text: "That works. Gate opens 8am, ask for Tunde at the loading bay. Payment is handled securely through Paystack once we reserve the deal.",
     time: "12:11",
   },
   {
     me: false,
-    text: "Agreed. Sending the transfer reference now — please mark the listing as reserved for us.",
+    text: "Agreed. Please reserve the listing for us and I will pay through the Paystack checkout.",
     time: "12:12",
   },
 ];
@@ -266,8 +266,8 @@ export const TXNS: Txn[] = [
 export const QUICK_REPLIES = [
   "Still available",
   "Send pickup address",
-  "Here are my transfer details",
-  "Payment proof attached",
+  "Pickup time confirmed",
+  "I will pay through Paystack",
 ] as const;
 
 export const PICKUP_LOCATIONS = [

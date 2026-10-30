@@ -600,7 +600,7 @@ export function MessagesPage() {
   const paid = Boolean(txn?.paidAt);
   const canAgree =
     isSeller && Boolean(parties) && status !== "Reserved" && status !== "Completed";
-  const canComplete = Boolean(parties) && status === "Reserved" && (!priced || paid);
+  const canComplete = Boolean(parties) && status === "Reserved" && priced && paid;
 
   return (
     <div className="page-shell page-shell--msgs">
@@ -800,7 +800,6 @@ export function MessagesPage() {
                       <PayButton
                         transactionId={txn.id}
                         email={user.email}
-                        amountNgn={priceNgn}
                         onPaid={(ref) => void onPaid(ref)}
                         onError={setError}
                       />
