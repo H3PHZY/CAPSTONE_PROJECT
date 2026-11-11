@@ -80,6 +80,64 @@ paths:
               schema:
                 $ref: '#/components/schemas/User'
           description: ''
+  /api/auth/password-reset/:
+    post:
+      operationId: auth_password_reset_create
+      summary: Request a password reset
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PasswordResetRequestRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
+  /api/auth/password-reset/confirm/:
+    post:
+      operationId: auth_password_reset_confirm_create
+      summary: Confirm a password reset
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PasswordResetConfirmRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetailResponse'
+          description: ''
   /api/auth/refresh/:
     post:
       operationId: auth_refresh_create
@@ -163,7 +221,12 @@ paths:
       - {}
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/impact/:
     get:
       operationId: impact_retrieve
@@ -177,7 +240,12 @@ paths:
       - cookieAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/listings/:
     get:
       operationId: listings_list
@@ -397,6 +465,38 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Listing'
+          description: ''
+  /api/media/upload/:
+    post:
+      operationId: media_upload_create
+      description: Uploads an authenticated user media file to the configured persistent
+        storage.
+      summary: Upload user media
+      tags:
+      - media
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaUploadResponse'
           description: ''
   /api/messages/:
     get:
@@ -623,7 +723,11 @@ paths:
       - cookieAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaystackInitializeResponse'
+          description: ''
   /api/pay/verify/:
     post:
       operationId: pay_verify_create
@@ -649,7 +753,11 @@ paths:
       - cookieAuth: []
       responses:
         '200':
-          description: No response body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaystackVerifyResponse'
+          description: ''
   /api/transactions/:
     get:
       operationId: transactions_list
@@ -946,6 +1054,13 @@ components:
           format: uri
           minLength: 1
           description: URL to waste material image
+    DetailResponse:
+      type: object
+      properties:
+        detail:
+          type: string
+      required:
+      - detail
     Listing:
       type: object
       properties:
@@ -1006,14 +1121,17 @@ components:
         zone:
           type: string
           maxLength: 100
+        address:
+          type: string
+          readOnly: true
         lat:
           type: number
           format: double
-          nullable: true
+          readOnly: true
         lng:
           type: number
           format: double
-          nullable: true
+          readOnly: true
         views:
           type: integer
           readOnly: true
@@ -1040,6 +1158,7 @@ components:
           format: date-time
           readOnly: true
       required:
+      - address
       - all_photos
       - classification
       - co2_saved
@@ -1047,6 +1166,8 @@ components:
       - created_at
       - distance
       - id
+      - lat
+      - lng
       - material
       - primary_photo_url
       - seller_cluster
@@ -1096,6 +1217,21 @@ components:
         zone:
           type: string
           maxLength: 100
+        address:
+          type: string
+          maxLength: 500
+        lat:
+          type: number
+          format: double
+          maximum: 90
+          minimum: -90
+          nullable: true
+        lng:
+          type: number
+          format: double
+          maximum: 180
+          minimum: -180
+          nullable: true
         predicted_material:
           $ref: '#/components/schemas/MaterialEnum'
         confidence:
@@ -1152,6 +1288,21 @@ components:
           type: string
           minLength: 1
           maxLength: 100
+        address:
+          type: string
+          maxLength: 500
+        lat:
+          type: number
+          format: double
+          maximum: 90
+          minimum: -90
+          nullable: true
+        lng:
+          type: number
+          format: double
+          maximum: 180
+          minimum: -180
+          nullable: true
         predicted_material:
           $ref: '#/components/schemas/MaterialEnum'
         confidence:
@@ -1207,14 +1358,6 @@ components:
           type: string
           minLength: 1
           maxLength: 100
-        lat:
-          type: number
-          format: double
-          nullable: true
-        lng:
-          type: number
-          format: double
-          nullable: true
       required:
       - material
       - title
@@ -1248,6 +1391,17 @@ components:
         * `Metal` - Metal
         * `Biodegradable` - Biodegradable
         * `Rubber` - Rubber
+    MediaUploadResponse:
+      type: object
+      properties:
+        path:
+          type: string
+        url:
+          type: string
+          format: uri
+      required:
+      - path
+      - url
     Message:
       type: object
       properties:
@@ -1422,6 +1576,32 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Transaction'
+    PasswordResetConfirmRequest:
+      type: object
+      properties:
+        uid:
+          type: string
+          minLength: 1
+        token:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 8
+      required:
+      - password
+      - token
+      - uid
+    PasswordResetRequestRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+      required:
+      - email
     PatchedListingRequest:
       type: object
       properties:
@@ -1459,14 +1639,6 @@ components:
           type: string
           minLength: 1
           maxLength: 100
-        lat:
-          type: number
-          format: double
-          nullable: true
-        lng:
-          type: number
-          format: double
-          nullable: true
     PatchedMessageRequest:
       type: object
       properties:
@@ -1516,6 +1688,9 @@ components:
           type: string
           nullable: true
           maxLength: 100
+        address:
+          type: string
+          maxLength: 500
         sells:
           type: boolean
         buys:
@@ -1539,10 +1714,14 @@ components:
         lat:
           type: number
           format: double
+          maximum: 90
+          minimum: -90
           nullable: true
         lng:
           type: number
           format: double
+          maximum: 180
+          minimum: -180
           nullable: true
     PatchedTransactionRequest:
       type: object
@@ -1570,6 +1749,34 @@ components:
           description: ID of the listing being purchased
       required:
       - listingId
+    PaystackInitializeResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        reference:
+          type: string
+        listingId:
+          type: string
+          format: uuid
+        listingTitle:
+          type: string
+        amountNgn:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        amountKobo:
+          type: integer
+        publicKey:
+          type: string
+      required:
+      - amountKobo
+      - amountNgn
+      - listingId
+      - listingTitle
+      - ok
+      - publicKey
+      - reference
     PaystackVerifyRequest:
       type: object
       properties:
@@ -1583,6 +1790,28 @@ components:
           description: ID of the purchased listing
       required:
       - listingId
+      - reference
+    PaystackVerifyResponse:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        reference:
+          type: string
+        listingId:
+          type: string
+          format: uuid
+        amountNgn:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        message:
+          type: string
+      required:
+      - amountNgn
+      - listingId
+      - message
+      - ok
       - reference
     Profile:
       type: object
@@ -1601,6 +1830,9 @@ components:
           type: string
           nullable: true
           maxLength: 100
+        address:
+          type: string
+          maxLength: 500
         sells:
           type: boolean
         buys:
@@ -1631,10 +1863,14 @@ components:
         lat:
           type: number
           format: double
+          maximum: 90
+          minimum: -90
           nullable: true
         lng:
           type: number
           format: double
+          maximum: 180
+          minimum: -180
           nullable: true
         created_at:
           type: string

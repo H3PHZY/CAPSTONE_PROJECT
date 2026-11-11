@@ -1,13 +1,4 @@
-/**
- * Client-side Paystack payment helper.
- *
- * Loads the Paystack inline JS once, then exposes `openPaystack` which
- * pops the Paystack modal and resolves with the transaction reference on
- * success, or rejects if the user closes/cancels.
- *
- * Env required (browser):
- *   NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY=pk_test_xxxxxxxxxxxxxxxxxxxxxxxx
- */
+import { djangoRequest } from "@/lib/django-api";
 
 declare global {
   interface Window {
@@ -34,6 +25,7 @@ function loadPaystackScript(): Promise<void> {
       resolve();
       return;
     }
+
     const script = document.createElement("script");
     script.src = PAYSTACK_SCRIPT_URL;
     script.async = true;
@@ -41,85 +33,49 @@ function loadPaystackScript(): Promise<void> {
       scriptLoaded = true;
       resolve();
     };
-    script.onerror = () => reject(new Error("Failed to load Paystack script"));
+    script.onerror = () => {
+      scriptLoading = null;
+      reject(new Error("Failed to load Paystack script"));
+    };
     document.head.appendChild(script);
   });
-
   return scriptLoading;
 }
 
 export type OpenPaystackOptions = {
   email: string;
-  /** Price in Naira (integer). Converted to kobo internally. */
-  amountNgn: number;
-  /** Server-generated structured reference */
-  reference?: string;
-  /** Shown in the Paystack modal as the product name. */
+  amountKobo: number;
+  reference: string;
+  publicKey: string;
   label?: string;
   metadata?: Record<string, unknown>;
 };
 
-/**
- * Initializes a payment on the backend to obtain a structured, server-generated reference
- * and verify the lot's current availability and price.
- */
-export async function initializePayment(opts: {
-  listingId: string;
-  buyerId?: string;
-}): Promise<{
+export type PaymentInitialization = {
   ok: boolean;
   reference: string;
   amountNgn: number;
   amountKobo: number;
-  listingTitle?: string;
-  publicKey?: string;
-}> {
-  // Try Django backend if token available, else Next.js route
-  const djangoUrl = process.env.NEXT_PUBLIC_DJANGO_API_URL || "http://127.0.0.1:8000/api";
-  const token = typeof window !== "undefined" ? localStorage.getItem("ecoloop_access_token") : null;
+  listingTitle: string;
+  publicKey: string;
+};
 
-  try {
-    const res = await fetch(`${djangoUrl}/pay/initialize/`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ listingId: opts.listingId }),
-    });
-    if (res.ok) {
-      return await res.json();
-    }
-  } catch {
-    // Continue to Next.js route fallback
-  }
-
-  const nextRes = await fetch("/api/pay/initialize", {
+export async function initializePayment(listingId: string) {
+  return djangoRequest<PaymentInitialization>("/pay/initialize/", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(opts),
+    body: JSON.stringify({ listingId }),
   });
-
-  const data = await nextRes.json();
-  if (!nextRes.ok) {
-    throw new Error(data.error || "Failed to initialize payment on the server.");
-  }
-  return data;
 }
 
-/**
- * Opens the Paystack checkout modal.
- * Resolves with the Paystack `reference` string on success.
- * Rejects if the user closes the modal without paying.
- */
-export async function openPaystack(opts: OpenPaystackOptions): Promise<string> {
+export async function openPaystack(
+  options: OpenPaystackOptions
+): Promise<string> {
   await loadPaystackScript();
-
-  const publicKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY;
-  if (!publicKey) {
-    throw new Error(
-      "NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY is not set. Add it to .env.local."
-    );
+  if (!options.publicKey) {
+    throw new Error("The Django API did not return a Paystack public key.");
+  }
+  if (!Number.isSafeInteger(options.amountKobo) || options.amountKobo <= 0) {
+    throw new Error("The Django API returned an invalid payment amount.");
   }
 
   return new Promise<string>((resolve, reject) => {
@@ -129,13 +85,13 @@ export async function openPaystack(opts: OpenPaystackOptions): Promise<string> {
     }
 
     const handler = window.PaystackPop.setup({
-      key: publicKey,
-      email: opts.email,
-      amount: Math.round(opts.amountNgn * 100), // NGN → kobo
+      key: options.publicKey,
+      email: options.email,
+      amount: options.amountKobo,
       currency: "NGN",
-      ref: opts.reference, // Server-generated reference
-      label: opts.label ?? "EcoLoop material purchase",
-      metadata: opts.metadata ?? {},
+      ref: options.reference,
+      label: options.label ?? "EcoLoop material purchase",
+      metadata: options.metadata ?? {},
       callback: (response: { reference: string }) => {
         resolve(response.reference);
       },
@@ -148,30 +104,20 @@ export async function openPaystack(opts: OpenPaystackOptions): Promise<string> {
   });
 }
 
-/**
- * Calls the backend /api/pay/verify route to check the reference and
- * mark the listing as Sold. Returns the API JSON on success, throws on error.
- */
-export async function verifyAndFulfil(opts: {
+export async function verifyAndFulfil(input: {
   reference: string;
   listingId: string;
-  buyerId: string;
-  expectedNgn: number;
-}): Promise<{ ok: boolean; reference: string; amountNgn: number; message: string }> {
-  const res = await fetch("/api/pay/verify", {
+}): Promise<{
+  ok: boolean;
+  reference: string;
+  amountNgn: number;
+  message: string;
+}> {
+  return djangoRequest("/pay/verify/", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(opts),
+    body: JSON.stringify({
+      reference: input.reference,
+      listingId: input.listingId,
+    }),
   });
-
-  const json = await res.json();
-
-  if (!res.ok) {
-    throw new Error(
-      (json as { error?: string; code?: string }).error ||
-        `Verification failed (${res.status})`
-    );
-  }
-
-  return json as { ok: boolean; reference: string; amountNgn: number; message: string };
 }

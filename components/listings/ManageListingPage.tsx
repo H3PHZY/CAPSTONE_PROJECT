@@ -207,14 +207,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
       setExtraUrls(photos.slice(1));
       setMsg("Listing updated.");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not save listing";
-      if (/photo_urls/i.test(message) || /column/i.test(message)) {
-        setError(
-          "Run supabase/migrations/008_listing_photo_urls.sql in the Supabase SQL Editor, then try again."
-        );
-      } else {
-        setError(message);
-      }
+      setError(err instanceof Error ? err.message : "Could not save listing");
     } finally {
       setSaving(false);
     }

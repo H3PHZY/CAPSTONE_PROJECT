@@ -40,6 +40,7 @@ class Profile(models.Model):
     phone = models.CharField(max_length=50, null=True, blank=True)
     cluster = models.CharField(max_length=100, default='Ogba')
     zone = models.CharField(max_length=100, null=True, blank=True)
+    address = models.CharField(max_length=500, default='', blank=True)
     sells = models.BooleanField(default=False)
     buys = models.BooleanField(default=False)
     carbon_impact = models.BooleanField(default=False)
@@ -107,6 +108,7 @@ class Listing(models.Model):
     photo_url = models.URLField(max_length=1000, null=True, blank=True)
     photo_urls = models.JSONField(default=list, blank=True)
     zone = models.CharField(max_length=100, default='Ogba')
+    address = models.CharField(max_length=500, default='', blank=True)
     lat = models.FloatField(null=True, blank=True)
     lng = models.FloatField(null=True, blank=True)
     views = models.PositiveIntegerField(default=0)
@@ -312,4 +314,3 @@ class Message(models.Model):
 
     def __str__(self):
         return f"Msg from {self.sender.id} to {self.recipient.id}: {self.body[:30]}"
-

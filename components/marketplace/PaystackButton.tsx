@@ -8,7 +8,7 @@ type PaystackButtonProps = {
   buyerEmail: string;
   buyerId: string;
   listingId: string;
-  /** Price as formatted Naira string from Supabase, e.g. "52,000" */
+  /** Price as formatted Naira string from the listing API, e.g. "52,000" */
   priceFormatted: string;
   /** Raw Naira amount (integer). Must match what the DB stored. */
   priceNgn: number;
@@ -44,11 +44,12 @@ export function PaystackButton({
     let ref: string;
     try {
       // Supervisor Upgrade #1: Obtain server-generated structured reference & verify lot availability
-      const init = await initializePayment({ listingId, buyerId });
+      const init = await initializePayment(listingId);
       ref = await openPaystack({
         email: buyerEmail,
-        amountNgn: init.amountNgn || priceNgn,
+        amountKobo: init.amountKobo,
         reference: init.reference,
+        publicKey: init.publicKey,
         label: listingTitle,
         metadata: { listingId, buyerId },
       });
@@ -71,8 +72,6 @@ export function PaystackButton({
       await verifyAndFulfil({
         reference: ref,
         listingId,
-        buyerId,
-        expectedNgn: priceNgn,
       });
       setPhase("success");
       onPurchaseComplete();

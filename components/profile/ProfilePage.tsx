@@ -6,6 +6,10 @@ import { useRouter } from "next/navigation";
 import { Select } from "@/components/ui/Select";
 import { ProfileAvatar } from "@/components/ui/ProfileAvatar";
 import { useAuth } from "@/lib/auth-context";
+import {
+  GoogleMapLocationPicker,
+  type SelectedLocation,
+} from "@/components/marketplace/GoogleMapLocationPicker";
 import { uploadProfileAvatar, validateProfileAvatar } from "@/lib/profile-avatars";
 
 export function ProfilePage() {
@@ -25,6 +29,11 @@ export function ProfilePage() {
   const [businessName, setBusinessName] = useState("");
   const [phone, setPhone] = useState("");
   const [cluster, setCluster] = useState("Ogba");
+  const [location, setLocation] = useState<SelectedLocation>({
+    address: "",
+    lat: null,
+    lng: null,
+  });
   const [sells, setSells] = useState(true);
   const [buys, setBuys] = useState(true);
   const [carbonImpact, setCarbonImpact] = useState(false);
@@ -46,6 +55,12 @@ export function ProfilePage() {
   const [savingCreds, setSavingCreds] = useState(false);
   const avatarRef = useRef<HTMLInputElement>(null);
 
+  function hasUnresolvedLocation() {
+    return Boolean(
+      location.address.trim() && (location.lat == null || location.lng == null)
+    );
+  }
+
   useEffect(() => {
     if (!ready) return;
     if (!user) {
@@ -59,6 +74,11 @@ export function ProfilePage() {
     setBusinessName(profile.business_name || "");
     setPhone(profile.phone || "");
     setCluster(profile.cluster || "Ogba");
+    setLocation({
+      address: profile.address || "",
+      lat: profile.lat,
+      lng: profile.lng,
+    });
     setSells(profile.sells);
     setBuys(profile.buys);
     setCarbonImpact(profile.carbon_impact);
@@ -80,6 +100,10 @@ export function ProfilePage() {
     e.preventDefault();
     setProfileMsg(null);
     setProfileErr(null);
+    if (hasUnresolvedLocation()) {
+      setProfileErr("Find the business address on the map before saving.");
+      return;
+    }
     setSavingProfile(true);
     try {
       await updateProfile({
@@ -89,6 +113,8 @@ export function ProfilePage() {
         sells,
         buys,
         carbonImpact,
+        zone: cluster,
+        ...location,
       });
       const nowVerified = Boolean(
         businessName.trim() && phone.trim() && (sells || buys)
@@ -109,6 +135,10 @@ export function ProfilePage() {
     e.preventDefault();
     setImpactMsg(null);
     setImpactErr(null);
+    if (hasUnresolvedLocation()) {
+      setImpactErr("Find the business address on the map before saving.");
+      return;
+    }
     setSavingImpact(true);
     try {
       await updateProfile({
@@ -118,6 +148,8 @@ export function ProfilePage() {
         sells,
         buys,
         carbonImpact,
+        zone: cluster,
+        ...location,
       });
       setImpactMsg(
         carbonImpact
@@ -337,6 +369,11 @@ export function ProfilePage() {
                 <div className="field-foot">Required for the marketplace Verified badge.</div>
               </div>
             </div>
+            <GoogleMapLocationPicker
+              value={location}
+              zone={cluster}
+              onChange={setLocation}
+            />
 
             {profileErr ? (
               <div className="field-foot" style={{ color: "oklch(0.52 0.13 30)" }}>

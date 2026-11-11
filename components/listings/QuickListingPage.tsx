@@ -4,10 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Select } from "@/components/ui/Select";
 import { useAuth } from "@/lib/auth-context";
+import {
+  GoogleMapLocationPicker,
+  type SelectedLocation,
+} from "@/components/marketplace/GoogleMapLocationPicker";
 import { co2FromWeight } from "@/lib/carbon";
 import { CATS, PICKUP_LOCATIONS } from "@/lib/data";
 import { uploadListingPhoto } from "@/lib/listing-photos";
 import { createLiveListing, parsePriceNgn } from "@/lib/listings";
+import { djangoRequest } from "@/lib/django-api";
 import type { MaterialCategory } from "@/lib/types";
 
 const STEP_DEFS = [
@@ -31,7 +36,7 @@ type ClassifyResponse = {
 };
 
 export function QuickListingPage() {
-  const { user, isAuthenticated, openAuth } = useAuth();
+  const { user, profile, isAuthenticated, openAuth } = useAuth();
   const [stage, setStage] = useState<Stage>("idle");
   const [scanPct, setScanPct] = useState(0);
   const [aiLabel, setAiLabel] = useState<MaterialCategory>("Metal");
@@ -46,6 +51,11 @@ export function QuickListingPage() {
   const [weight, setWeight] = useState("180");
   const [price, setPrice] = useState("52,000");
   const [pickup, setPickup] = useState<string>(PICKUP_LOCATIONS[0]);
+  const [location, setLocation] = useState<SelectedLocation>({
+    address: "",
+    lat: null,
+    lng: null,
+  });
   const [published, setPublished] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [photoPath, setPhotoPath] = useState<string | null>(null);
@@ -58,6 +68,16 @@ export function QuickListingPage() {
   const scanRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const doneRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewObjectUrl = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!profile) return;
+    setPickup(profile.zone || profile.cluster || PICKUP_LOCATIONS[0]);
+    setLocation({
+      address: profile.address || "",
+      lat: profile.lat,
+      lng: profile.lng,
+    });
+  }, [profile]);
 
   useEffect(() => {
     return () => {
@@ -91,15 +111,10 @@ export function QuickListingPage() {
   async function classifyPhoto(publicUrl: string) {
     setClassifying(true);
     try {
-      const res = await fetch("/api/classify", {
+      const data = await djangoRequest<ClassifyResponse>("/classify/", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageUrl: publicUrl }),
       });
-      const data = (await res.json()) as ClassifyResponse;
-      if (!res.ok) {
-        throw new Error(data.error || "Classification failed");
-      }
       setAiLabel(data.material);
       setAiConfidence(data.confidencePct);
       setAiAlts(
@@ -262,6 +277,13 @@ export function QuickListingPage() {
       setUploadError("Add a listing title.");
       return;
     }
+    if (
+      location.address.trim() &&
+      (location.lat == null || location.lng == null)
+    ) {
+      setUploadError("Find the pickup address on the map before publishing.");
+      return;
+    }
 
     setUploadError(null);
     setPublishing(true);
@@ -274,6 +296,9 @@ export function QuickListingPage() {
         priceNgn: parsePriceNgn(price),
         photoUrl,
         zone: pickup,
+        address: location.address,
+        lat: location.lat,
+        lng: location.lng,
         predictedMaterial: aiLabel,
         confidence: Math.max(0.01, Math.min(1, aiConfidence / 100 || 0.5)),
         overridden,
@@ -330,7 +355,7 @@ export function QuickListingPage() {
             be notified the moment a buyer initiates contact.
           </p>
           <p className="publish-copy publish-copy--mono">
-            Saved to Supabase · listing is Live in the marketplace.
+            Saved to EcoLoop · listing is Live in the marketplace.
           </p>
           <div className="publish-actions">
             {publishedId ? (
@@ -554,6 +579,11 @@ export function QuickListingPage() {
                   />
                   <div className="field-foot">Saved from your profile · select to change</div>
                 </div>
+                <GoogleMapLocationPicker
+                  value={location}
+                  zone={pickup}
+                  onChange={setLocation}
+                />
               </div>
             </div>
 
@@ -576,7 +606,7 @@ export function QuickListingPage() {
                 {publishing ? "Publishing…" : "Publish listing"}
               </button>
               <div className="field-foot">
-                Publishes a Live listing to Supabase with your photo and details.
+                Publishes your photo and listing details to the EcoLoop API.
               </div>
             </div>
           </div>

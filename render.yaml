@@ -1,0 +1,59 @@
+databases:
+  - name: ecoloop-db
+    plan: basic-256mb
+    databaseName: ecoloop
+    user: ecoloop
+
+services:
+  - type: web
+    name: ecoloop-api
+    runtime: python
+    plan: starter
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
+    releaseCommand: python manage.py migrate --noinput
+    startCommand: gunicorn ecoloop.wsgi:application --bind 0.0.0.0:$PORT --workers 2
+    healthCheckPath: /api/docs/
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ecoloop-db
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: localhost,127.0.0.1
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: HF_TOKEN
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        sync: false
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: EMAIL_USE_TLS
+        value: "True"

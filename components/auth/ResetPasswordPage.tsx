@@ -4,44 +4,31 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
-import { supabase } from "@/lib/supabase";
+import { djangoRequest } from "@/lib/django-api";
 
 export function ResetPasswordPage() {
   const router = useRouter();
-  const { updatePassword, openAuth, ready } = useAuth();
+  const { openAuth, ready } = useAuth();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [recoveryReady, setRecoveryReady] = useState(false);
+  const [resetToken, setResetToken] = useState<{ uid: string; token: string } | null>(
+    null
+  );
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    let active = true;
-
-    void supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!active) return;
-      if (session) setRecoveryReady(true);
-      setChecking(false);
-    });
-
-    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!active) return;
-      if (event === "PASSWORD_RECOVERY" || (event === "SIGNED_IN" && session)) {
-        setRecoveryReady(true);
-        setChecking(false);
-      }
-    });
-
-    return () => {
-      active = false;
-      listener.subscription.unsubscribe();
-    };
+    const params = new URLSearchParams(window.location.search);
+    const uid = params.get("uid");
+    const token = params.get("token");
+    if (uid && token) setResetToken({ uid, token });
+    setChecking(false);
   }, []);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
     setError(null);
     if (password.length < 8) {
       setError("Password must be at least 8 characters.");
@@ -51,13 +38,21 @@ export function ResetPasswordPage() {
       setError("Passwords do not match.");
       return;
     }
+    if (!resetToken) {
+      setError("This password reset link is invalid or has expired.");
+      return;
+    }
+
     setSubmitting(true);
     try {
-      await updatePassword(password);
+      await djangoRequest<{ detail: string }>("/auth/password-reset/confirm/", {
+        method: "POST",
+        body: JSON.stringify({ ...resetToken, password }),
+      });
       setDone(true);
-      setTimeout(() => router.push("/dashboard"), 1200);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not update password");
+      setTimeout(() => router.push("/login"), 1200);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not update password");
     } finally {
       setSubmitting(false);
     }
@@ -71,7 +66,7 @@ export function ResetPasswordPage() {
     );
   }
 
-  if (!recoveryReady && !done) {
+  if (!resetToken && !done) {
     return (
       <div className="page-shell">
         <div className="panel panel--pad" style={{ maxWidth: 460, margin: "48px auto" }}>
@@ -80,7 +75,7 @@ export function ResetPasswordPage() {
             Link missing or expired
           </h1>
           <p className="auth-lede">
-            Open the reset link from your email on this device, or request a new one.
+            Open the reset link from your email, or request a new one.
           </p>
           <button
             type="button"
@@ -105,16 +100,16 @@ export function ResetPasswordPage() {
           {done ? "Password updated" : "Choose a new password"}
         </h1>
         {done ? (
-          <p className="auth-lede">You’re signed in. Redirecting to your dashboard…</p>
+          <p className="auth-lede">Password updated. Redirecting you to sign in…</p>
         ) : (
-          <form className="form-stack" onSubmit={submit} style={{ marginTop: 18 }}>
+          <form className="form-stack" onSubmit={(event) => void submit(event)} style={{ marginTop: 18 }}>
             <div>
               <label className="field-label">New password</label>
               <input
                 type="password"
                 className="input"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(event) => setPassword(event.target.value)}
                 autoComplete="new-password"
                 minLength={8}
                 required
@@ -127,7 +122,7 @@ export function ResetPasswordPage() {
                 type="password"
                 className="input"
                 value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
+                onChange={(event) => setConfirm(event.target.value)}
                 autoComplete="new-password"
                 minLength={8}
                 required

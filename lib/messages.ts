@@ -1,5 +1,5 @@
-import { supabase } from "@/lib/supabase";
-import type { MessageRow } from "@/lib/database.types";
+import { djangoListings, djangoMessages } from "@/lib/django-api";
+import { DjangoApiError } from "@/lib/django-auth";
 import type { ChatMessage } from "@/lib/types";
 
 export type MessageThread = {
@@ -14,17 +14,8 @@ export type MessageThread = {
   preview: string;
   timeLabel: string;
   updatedAt: string;
-};
-
-type MessageJoin = MessageRow & {
-  listing?: {
-    id: string;
-    title: string;
-    material: string;
-    seller_id: string;
-  } | null;
-  sender?: { id: string; business_name: string; avatar_url?: string | null } | null;
-  recipient?: { id: string; business_name: string; avatar_url?: string | null } | null;
+  lastMessageId: string;
+  lastSenderId: string;
 };
 
 function formatTime(iso: string): string {
@@ -57,94 +48,31 @@ function threadKey(listingId: string, otherUserId: string) {
   return `${listingId}:${otherUserId}`;
 }
 
-const MESSAGE_SELECT = `
-  *,
-  listing:listings!listing_id (
-    id,
-    title,
-    material,
-    seller_id
-  ),
-  sender:profiles!sender_id (
-    id,
-    business_name,
-    avatar_url
-  ),
-  recipient:profiles!recipient_id (
-    id,
-    business_name,
-    avatar_url
-  )
-`;
-
-export async function fetchInbox(userId: string): Promise<MessageThread[]> {
-  const { data, error } = await supabase
-    .from("messages")
-    .select(MESSAGE_SELECT)
-    .or(`sender_id.eq.${userId},recipient_id.eq.${userId}`)
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
-
-  const threads = new Map<string, MessageThread>();
-  for (const row of (data ?? []) as unknown as MessageJoin[]) {
-    const otherUserId = row.sender_id === userId ? row.recipient_id : row.sender_id;
-    const other = row.sender_id === userId ? row.recipient : row.sender;
-    const key = threadKey(row.listing_id, otherUserId);
-    if (threads.has(key)) continue;
-
-    threads.set(key, {
-      key,
-      listingId: row.listing_id,
-      listingTitle: row.listing?.title || "Listing",
-      listingMaterial: row.listing?.material || "",
-      sellerId: row.listing?.seller_id || "",
-      otherUserId,
-      otherName: other?.business_name || "EcoLoop user",
-      otherAvatarUrl: other?.avatar_url ?? null,
-      preview: row.body,
-      timeLabel: formatTime(row.created_at),
-      updatedAt: row.created_at,
-    });
-  }
-
-  return [...threads.values()];
+export async function fetchInbox(_userId: string): Promise<MessageThread[]> {
+  const rows = await djangoMessages.fetchInbox();
+  return rows.map((row) => ({
+    ...row,
+    timeLabel: formatTime(row.updatedAt),
+  }));
 }
 
 export async function fetchThreadMessages(
-  userId: string,
+  _userId: string,
   listingId: string,
   otherUserId: string
 ): Promise<ChatMessage[]> {
-  const { data, error } = await supabase
-    .from("messages")
-    .select("*")
-    .eq("listing_id", listingId)
-    .order("created_at", { ascending: true });
-
-  if (error) throw error;
-
-  const filtered = ((data ?? []) as MessageRow[])
-    .filter(
-      (row) =>
-        (row.sender_id === userId && row.recipient_id === otherUserId) ||
-        (row.sender_id === otherUserId && row.recipient_id === userId)
-    )
-    .sort((a, b) => a.created_at.localeCompare(b.created_at));
-
-  const byId = new Map(filtered.map((row) => [row.id, row]));
-
-  return filtered.map((row) => ({
+  const rows = await djangoMessages.fetchThread(listingId, otherUserId);
+  return rows.map((row) => ({
     id: row.id,
-    me: row.sender_id === userId,
+    me: row.me,
     text: row.body,
-    time: formatTime(row.created_at),
+    time: row.time || formatTime(row.created_at),
     createdAt: row.created_at,
     replyToId: row.reply_to,
-    replyText: row.reply_to ? byId.get(row.reply_to)?.body ?? null : null,
-    imageUrl: row.image_url,
-    attachmentName: row.attachment_name ?? null,
-    attachmentMime: row.attachment_mime ?? null,
+    replyText: row.reply_text,
+    imageUrl: row.image_url ?? row.attachment ?? null,
+    attachmentName: row.attachment_name,
+    attachmentMime: row.attachment_mime,
   }));
 }
 
@@ -168,116 +96,36 @@ export async function sendMessage(input: {
     throw new Error("You cannot message yourself");
   }
 
-  const { data, error } = await supabase
-    .from("messages")
-    .insert({
-      listing_id: input.listingId,
-      sender_id: input.senderId,
-      recipient_id: input.recipientId,
-      body,
-      reply_to: input.replyTo ?? null,
-      image_url: input.imageUrl ?? null,
-      attachment_name: input.attachmentName ?? null,
-      attachment_mime: input.attachmentMime ?? null,
-    })
-    .select("*")
-    .single();
-
-  if (error) {
-    // Older DBs without attachment_* columns — still send URL on image_url
-    if (/attachment_name|attachment_mime|column/i.test(error.message) && hasFile) {
-      const retry = await supabase
-        .from("messages")
-        .insert({
-          listing_id: input.listingId,
-          sender_id: input.senderId,
-          recipient_id: input.recipientId,
-          body,
-          reply_to: input.replyTo ?? null,
-          image_url: input.imageUrl ?? null,
-        })
-        .select("*")
-        .single();
-      if (retry.error) throw retry.error;
-      // continue with interest logic using retry.data
-      return afterSend(retry.data as MessageRow, input);
-    }
-    throw error;
-  }
-
-  return afterSend(data as MessageRow, input);
-}
-
-async function afterSend(
-  data: MessageRow,
-  input: { listingId: string; senderId: string; recipientId: string }
-) {
-  // Buyer opening the chat creates an Interest row the seller can later reserve.
-  if (input.senderId !== input.recipientId) {
-    const { data: listing } = await supabase
-      .from("listings")
-      .select("id, seller_id")
-      .eq("id", input.listingId)
-      .maybeSingle();
-
-    if (listing && listing.seller_id !== input.senderId) {
-      const { data: existing } = await supabase
-        .from("transactions")
-        .select("id")
-        .eq("listing_id", input.listingId)
-        .eq("buyer_id", input.senderId)
-        .eq("seller_id", listing.seller_id)
-        .maybeSingle();
-
-      if (!existing) {
-        await supabase.from("transactions").insert({
-          listing_id: input.listingId,
-          buyer_id: input.senderId,
-          seller_id: listing.seller_id,
-          status: "Interest",
-        });
-      }
-    }
-  }
-
-  return data;
+  return djangoMessages.send({
+    listing: input.listingId,
+    recipient: input.recipientId,
+    body,
+    replyTo: input.replyTo,
+    imageUrl: input.imageUrl,
+    attachmentName: input.attachmentName,
+    attachmentMime: input.attachmentMime,
+  });
 }
 
 export async function resolveListingContact(listingId: string, viewerId: string) {
-  const { data, error } = await supabase
-    .from("listings")
-    .select(
-      `
-      id,
-      title,
-      material,
-      seller_id,
-      seller:profiles!seller_id (
-        id,
-        business_name,
-        avatar_url
-      )
-    `
-    )
-    .eq("id", listingId)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) return null;
-
-  const seller = Array.isArray(data.seller) ? data.seller[0] : data.seller;
-  if (data.seller_id === viewerId) {
+  let listing;
+  try {
+    listing = await djangoListings.fetchById(listingId);
+  } catch (error) {
+    if (error instanceof DjangoApiError && error.status === 404) return null;
+    throw error;
+  }
+  if (listing.seller_id === viewerId) {
     throw new Error("This is your listing — wait for a buyer to contact you.");
   }
 
   return {
-    listingId: data.id as string,
-    listingTitle: data.title as string,
-    listingMaterial: data.material as string,
-    sellerId: data.seller_id as string,
-    otherUserId: data.seller_id as string,
-    otherName: (seller as { business_name?: string } | null)?.business_name || "Seller",
-    otherAvatarUrl:
-      (seller as { avatar_url?: string | null } | null)?.avatar_url ?? null,
+    listingId: listing.id,
+    listingTitle: listing.title,
+    listingMaterial: listing.material,
+    sellerId: listing.seller_id,
+    otherUserId: listing.seller_id,
+    otherName: listing.seller_name || "Seller",
+    otherAvatarUrl: null,
   };
 }

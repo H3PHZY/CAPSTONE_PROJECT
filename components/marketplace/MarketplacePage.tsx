@@ -3,6 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Select } from "@/components/ui/Select";
+import {
+  GoogleMapLocationPicker,
+  type SelectedLocation,
+} from "@/components/marketplace/GoogleMapLocationPicker";
 import { useAuth } from "@/lib/auth-context";
 import {
   CATS,
@@ -20,6 +24,11 @@ function priceNum(p: string) {
 
 export function MarketplacePage() {
   const { profile } = useAuth();
+  const [viewerLocation, setViewerLocation] = useState<SelectedLocation>({
+    address: "",
+    lat: null,
+    lng: null,
+  });
   const [q, setQ] = useState("");
   const [radius, setRadius] = useState<RadiusOption>("Within 10 km");
   const [cat, setCat] = useState<MaterialCategory | "All categories">("All categories");
@@ -28,12 +37,28 @@ export function MarketplacePage() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const unresolvedSearchLocation = Boolean(
+    viewerLocation.address.trim() &&
+      (viewerLocation.lat == null || viewerLocation.lng == null)
+  );
+  const searchLoading = loading && !unresolvedSearchLocation;
 
   useEffect(() => {
+    if (!profile) return;
+    setViewerLocation({
+      address: profile.address || "",
+      lat: profile.lat,
+      lng: profile.lng,
+    });
+  }, [profile?.address, profile?.lat, profile?.lng]);
+
+  useEffect(() => {
+    if (unresolvedSearchLocation) return;
+
     let active = true;
     setLoading(true);
     setError(null);
-    void fetchLiveListings(profile?.cluster)
+    void fetchLiveListings(profile?.cluster, viewerLocation)
       .then((rows) => {
         if (!active) return;
         setListings(rows);
@@ -49,9 +74,15 @@ export function MarketplacePage() {
     return () => {
       active = false;
     };
-  }, [profile?.cluster]);
+  }, [
+    profile?.cluster,
+    viewerLocation.lat,
+    viewerLocation.lng,
+    unresolvedSearchLocation,
+  ]);
 
   const list = useMemo(() => {
+    if (unresolvedSearchLocation) return [];
     const max = RADII[radius] ?? 999;
     const query = q.trim().toLowerCase();
     let filtered: Listing[] = listings.filter(
@@ -71,7 +102,7 @@ export function MarketplacePage() {
       filtered = [...filtered].sort((a, b) => a.distance - b.distance);
     }
     return filtered;
-  }, [listings, q, radius, cat, sort, verifiedOnly]);
+  }, [listings, q, radius, cat, sort, verifiedOnly, unresolvedSearchLocation]);
 
   const chips: { label: string; v: MaterialCategory | "All categories" }[] = [
     { label: "All", v: "All categories" },
@@ -120,6 +151,14 @@ export function MarketplacePage() {
           />
         </div>
 
+        <div className="filter-location">
+          <GoogleMapLocationPicker
+            value={viewerLocation}
+            zone={profile?.cluster || "Ogba"}
+            onChange={setViewerLocation}
+          />
+        </div>
+
         <div className="filter-chips-row">
           <span className="filter-chips-label">QUICK FILTER</span>
           {chips.map((c) => (
@@ -148,9 +187,9 @@ export function MarketplacePage() {
         <div>
           <h1 className="page-title">Available materials near you</h1>
           <div className="page-sub">
-            {loading
+            {searchLoading
               ? "Loading listings…"
-              : `${list.length} listings · ${cat.toLowerCase()} · ${radius.toLowerCase()} of Ogba Industrial Estate`}
+              : `${list.length} listings · ${cat.toLowerCase()} · ${radius.toLowerCase()} of ${viewerLocation.address || profile?.cluster || "Ogba"}`}
           </div>
         </div>
         <div className="live-pill">
@@ -159,7 +198,13 @@ export function MarketplacePage() {
         </div>
       </div>
 
-      {error ? <div className="upload-error">{error}</div> : null}
+      {unresolvedSearchLocation ? (
+        <div className="upload-error">
+          Find the search address on the map to apply this location.
+        </div>
+      ) : error ? (
+        <div className="upload-error">{error}</div>
+      ) : null}
 
       <div className="market-grid">
         {list.map((L) => (
@@ -167,19 +212,27 @@ export function MarketplacePage() {
         ))}
       </div>
 
-      {!loading && list.length === 0 ? (
+      {(!loading || unresolvedSearchLocation) && list.length === 0 ? (
         <div className="empty-state">
           <div className="empty-title">
-            {listings.length === 0
+            {viewerLocation.address.trim() &&
+            (viewerLocation.lat == null || viewerLocation.lng == null)
+              ? "Resolve this location first"
+              : listings.length === 0
               ? "No live listings yet"
               : "No listings match this filter"}
           </div>
           <div className="empty-sub">
-            {listings.length === 0
+            {viewerLocation.address.trim() &&
+            (viewerLocation.lat == null || viewerLocation.lng == null)
+              ? "Select Find on map to apply the address as your search origin."
+              : listings.length === 0
               ? "Be the first to publish surplus material from Quick listing."
               : "Widen the proximity / category filters, or clear them."}
           </div>
-          {listings.length === 0 ? (
+          {listings.length === 0 &&
+          !(viewerLocation.address.trim() &&
+            (viewerLocation.lat == null || viewerLocation.lng == null)) ? (
             <Link href="/listings/new" className="btn btn-primary">
               List a material
             </Link>

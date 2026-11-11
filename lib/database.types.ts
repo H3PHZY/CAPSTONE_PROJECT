@@ -1,6 +1,5 @@
 /**
- * Database row shapes for EcoLoop Supabase schema (Step 1).
- * Keep in sync with supabase/migrations/001_initial_schema.sql
+ * Database row shapes returned by the EcoLoop Django REST API.
  */
 
 export type MaterialCategory =
@@ -20,6 +19,7 @@ export type ProfileRow = {
   phone: string | null;
   cluster: string;
   zone: string | null;
+  address: string;
   sells: boolean;
   buys: boolean;
   carbon_impact: boolean;
@@ -44,6 +44,7 @@ export type ListingRow = {
   /** Extra gallery images; cover remains photo_url. Optional until migration 008. */
   photo_urls?: string[];
   zone: string | null;
+  address: string;
   lat: number | null;
   lng: number | null;
   views: number;

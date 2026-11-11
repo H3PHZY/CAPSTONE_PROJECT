@@ -107,6 +107,61 @@ class EcoLoopAPITestCase(TestCase):
         self.assertEqual(listing.classification.final_material, "Metal")
         self.assertEqual(listing.classification.confidence, Decimal("0.96"))
 
+    def test_listing_location_requires_resolved_coordinates(self):
+        self.client.force_authenticate(user=self.seller)
+        payload = {
+            "title": "Resolved-location scrap",
+            "material": "Metal",
+            "weight_kg": "25.00",
+            "zone": "Ogba",
+            "address": "12 Acme Road, Lagos, Nigeria",
+            "predicted_material": "Metal",
+            "lat": 6.61,
+            "lng": 3.35,
+        }
+
+        response = self.client.post("/api/listings/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        listing = Listing.objects.get(id=response.data["id"])
+        self.assertEqual(listing.address, payload["address"])
+        self.assertEqual(listing.lat, payload["lat"])
+        self.assertEqual(listing.lng, payload["lng"])
+
+        self.client.force_authenticate(user=self.buyer)
+        search_response = self.client.get(
+            "/api/listings/?lat=6.61&lng=3.35&radius=1"
+        )
+        self.assertEqual(search_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(search_response.data["results"]), 1)
+        self.assertAlmostEqual(search_response.data["results"][0]["distance"], 0, places=1)
+
+        self.client.force_authenticate(user=self.seller)
+        payload.pop("lat")
+        payload.pop("lng")
+        response = self.client.post("/api/listings/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("address", response.data)
+
+    def test_profile_location_updates_require_coordinate_pair(self):
+        self.client.force_authenticate(user=self.seller)
+        response = self.client.patch(
+            "/api/auth/me/",
+            {"address": "12 Acme Road, Lagos, Nigeria", "lat": 6.61, "lng": 3.35},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.seller.profile.refresh_from_db()
+        self.assertEqual(self.seller.profile.address, "12 Acme Road, Lagos, Nigeria")
+        self.assertEqual(self.seller.profile.lat, 6.61)
+        self.assertEqual(self.seller.profile.lng, 3.35)
+
+        response = self.client.patch(
+            "/api/auth/me/",
+            {"lat": 6.62},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_haversine_distance_calculation(self):
         """Test accurate Haversine distance between Ogba and Ikeja clusters."""
         # Ogba: (6.6325, 3.337), Ikeja: (6.6018, 3.3515)
@@ -173,4 +228,3 @@ class EcoLoopAPITestCase(TestCase):
         txn = Transaction.objects.filter(listing=listing, buyer=self.buyer).first()
         self.assertIsNotNone(txn)
         self.assertEqual(txn.status, TransactionStatus.INTEREST)
-

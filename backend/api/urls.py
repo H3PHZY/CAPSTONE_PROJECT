@@ -11,6 +11,8 @@ from api.views import (
     SignupView,
     LoginView,
     MeView,
+    PasswordResetRequestView,
+    PasswordResetConfirmView,
     ListingViewSet,
     TransactionViewSet,
     MessageViewSet,
@@ -18,6 +20,7 @@ from api.views import (
     ClassifyView,
     PaystackInitializeView,
     PaystackVerifyView,
+    MediaUploadView,
 )
 
 router = DefaultRouter()
@@ -36,14 +39,16 @@ urlpatterns = [
     path('auth/login/', LoginView.as_view(), name='auth-login'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='auth-refresh'),
     path('auth/me/', MeView.as_view(), name='auth-me'),
+    path('auth/password-reset/', PasswordResetRequestView.as_view(), name='auth-password-reset'),
+    path('auth/password-reset/confirm/', PasswordResetConfirmView.as_view(), name='auth-password-reset-confirm'),
 
     # Feature endpoints
     path('impact/', CarbonImpactView.as_view(), name='carbon-impact'),
     path('classify/', ClassifyView.as_view(), name='ai-classify'),
+    path('media/upload/', MediaUploadView.as_view(), name='media-upload'),
     path('pay/initialize/', PaystackInitializeView.as_view(), name='paystack-initialize'),
     path('pay/verify/', PaystackVerifyView.as_view(), name='paystack-verify'),
 
     # ViewSet routes
     path('', include(router.urls)),
 ]
-

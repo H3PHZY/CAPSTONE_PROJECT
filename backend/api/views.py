@@ -1,12 +1,22 @@
 from decimal import Decimal
+from pathlib import PurePath
 import secrets
 import time
+import uuid
 import requests
+from PIL import Image, UnidentifiedImageError
 from django.conf import settings
 from django.contrib.auth import get_user_model, authenticate
+from django.contrib.auth.password_validation import validate_password
+from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError
+from django.core.mail import send_mail
 from django.db import transaction as db_transaction
-from django.db.models import Q, Sum, Count
+from django.db.models import Q, Sum, Count, Case, When, IntegerField
+from django.core.files.storage import default_storage
 from django.utils import timezone
+from django.utils.encoding import force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from rest_framework import viewsets, status, views
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -33,8 +43,14 @@ from api.serializers import (
     MessageSerializer,
     LoginRequestSerializer,
     PaystackInitializeSerializer,
+    PaystackInitializeResponseSerializer,
     PaystackVerifySerializer,
+    PaystackVerifyResponseSerializer,
     ClassifyRequestSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetConfirmSerializer,
+    DetailResponseSerializer,
+    MediaUploadResponseSerializer,
 )
 from api.permissions import (
     IsProfileOwnerOrReadOnly,
@@ -155,6 +171,76 @@ class MeView(views.APIView):
 
         return Response(UserSerializer(request.user).data)
 
+
+class PasswordResetRequestView(views.APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=PasswordResetRequestSerializer,
+        responses={200: DetailResponseSerializer},
+        summary="Request a password reset",
+    )
+    def post(self, request):
+        email = str(request.data.get('email', '')).strip()
+        user = User.objects.filter(email__iexact=email, is_active=True).first() if email else None
+        if user:
+            uid = urlsafe_base64_encode(str(user.pk).encode())
+            token = default_token_generator.make_token(user)
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
+            reset_url = f'{frontend_url}/reset-password?uid={uid}&token={token}'
+            send_mail(
+                'Reset your EcoLoop password',
+                f'Use this link to reset your EcoLoop password: {reset_url}',
+                settings.DEFAULT_FROM_EMAIL,
+                [user.email],
+                fail_silently=False,
+            )
+
+        return Response({
+            'detail': 'If an account exists for that email, a password reset link has been sent.'
+        })
+
+
+class PasswordResetConfirmView(views.APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request=PasswordResetConfirmSerializer,
+        responses={200: DetailResponseSerializer},
+        summary="Confirm a password reset",
+    )
+    def post(self, request):
+        uid = request.data.get('uid')
+        token = request.data.get('token')
+        password = request.data.get('password')
+        if not uid or not token or not password:
+            return Response(
+                {'error': 'uid, token, and password are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            user_id = force_str(urlsafe_base64_decode(uid))
+            user = User.objects.get(pk=user_id, is_active=True)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            user = None
+
+        if not user or not default_token_generator.check_token(user, token):
+            return Response(
+                {'error': 'This password reset link is invalid or has expired.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            validate_password(password, user)
+        except ValidationError as error:
+            return Response({'error': ' '.join(error.messages)}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.set_password(password)
+        user.save(update_fields=['password'])
+        return Response({'detail': 'Password reset successfully.'})
+
+
 # ─── 2. Listing ViewSet ───────────────────────────────────────────────────────
 
 class ListingViewSet(viewsets.ModelViewSet):
@@ -203,6 +289,16 @@ class ListingViewSet(viewsets.ModelViewSet):
             viewer_cluster = user.profile.cluster
         viewer_cluster = viewer_cluster or self.request.query_params.get('cluster', 'Ogba')
         v_lat, v_lng = get_coords_for_zone(viewer_cluster)
+        if user.is_authenticated and hasattr(user, 'profile'):
+            v_lat = user.profile.lat or v_lat
+            v_lng = user.profile.lng or v_lng
+        try:
+            requested_lat = float(self.request.query_params.get('lat', ''))
+            requested_lng = float(self.request.query_params.get('lng', ''))
+            if -90 <= requested_lat <= 90 and -180 <= requested_lng <= 180:
+                v_lat, v_lng = requested_lat, requested_lng
+        except (TypeError, ValueError):
+            pass
 
         listings_list = list(qs)
 
@@ -227,12 +323,12 @@ class ListingViewSet(viewsets.ModelViewSet):
 
         # Return list preserving custom ordering
         ids = [L.id for L in listings_list]
-        clauses = ' '.join([f"WHEN '{pk}' THEN {i}" for i, pk in enumerate(ids)])
         if ids:
-            return qs.filter(id__in=ids).extra(
-                select={'manual_order': f"CASE id {clauses} END"},
-                order_by=['manual_order']
+            ordering = Case(
+                *[When(pk=pk, then=index) for index, pk in enumerate(ids)],
+                output_field=IntegerField(),
             )
+            return qs.filter(id__in=ids).order_by(ordering)
         return qs.none()
 
     def retrieve(self, request, *args, **kwargs):
@@ -429,6 +525,8 @@ class MessageViewSet(viewsets.ModelViewSet):
                     'preview': m.body[:80],
                     'timeLabel': m.created_at.strftime('%H:%M'),
                     'updatedAt': m.created_at.isoformat(),
+                    'lastMessageId': str(m.id),
+                    'lastSenderId': str(m.sender_id),
                 }
 
         return Response(list(threads.values()))
@@ -459,7 +557,8 @@ class CarbonImpactView(views.APIView):
 
     @extend_schema(
         summary="Get carbon footprint analytics",
-        description="Returns user's cumulative CO2e diverted, tonnage, material breakdowns, and equivalencies."
+        description="Returns user's cumulative CO2e diverted, tonnage, material breakdowns, and equivalencies.",
+        responses=OpenApiTypes.OBJECT,
     )
     def get(self, request):
         user = request.user
@@ -533,6 +632,7 @@ class ClassifyView(views.APIView):
 
     @extend_schema(
         request=ClassifyRequestSerializer,
+        responses=OpenApiTypes.OBJECT,
         summary="AI Waste Material Classification",
         description="Classifies waste material images (Plastic, Glass, Metal, Biodegradable, Rubber) via Hugging Face Vision Transformer."
     )
@@ -561,6 +661,63 @@ class ClassifyView(views.APIView):
         except Exception as e:
             return Response({'error': str(e)}, status=502)
 
+
+class MediaUploadView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    MAX_BYTES = {
+        'listing-photo': 8 * 1024 * 1024,
+        'profile-avatar': 5 * 1024 * 1024,
+        'message-attachment': 12 * 1024 * 1024,
+    }
+    IMAGE_TYPES = {'jpg', 'jpeg', 'png', 'webp'}
+    ATTACHMENT_TYPES = IMAGE_TYPES | {
+        'gif', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'csv',
+    }
+
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses={201: MediaUploadResponseSerializer},
+        summary='Upload user media',
+        description='Uploads an authenticated user media file to the configured persistent storage.',
+    )
+    def post(self, request):
+        uploaded = request.FILES.get('file')
+        category = request.data.get('category')
+        if category not in self.MAX_BYTES or uploaded is None:
+            return Response(
+                {'error': 'A file and supported category are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if uploaded.size > self.MAX_BYTES[category]:
+            return Response(
+                {'error': 'File exceeds the size limit for this upload.'},
+                status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            )
+
+        extension = PurePath(uploaded.name).suffix.lower().lstrip('.')
+        allowed = self.IMAGE_TYPES if category != 'message-attachment' else self.ATTACHMENT_TYPES
+        if extension not in allowed:
+            return Response(
+                {'error': 'Unsupported file type.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if category != 'message-attachment' or extension in self.IMAGE_TYPES:
+            try:
+                image = Image.open(uploaded)
+                image.verify()
+                uploaded.seek(0)
+            except (UnidentifiedImageError, OSError, ValueError):
+                return Response(
+                    {'error': 'The uploaded file is not a valid image.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        path = f'{category}/{request.user.id}/{uuid.uuid4().hex}.{extension}'
+        stored_path = default_storage.save(path, uploaded)
+        url = request.build_absolute_uri(default_storage.url(stored_path))
+        return Response({'path': stored_path, 'url': url}, status=status.HTTP_201_CREATED)
+
 # ─── 7. Paystack Payment Views ────────────────────────────────────────────────
 
 class PaystackInitializeView(views.APIView):
@@ -573,6 +730,7 @@ class PaystackInitializeView(views.APIView):
 
     @extend_schema(
         request=PaystackInitializeSerializer,
+        responses={200: PaystackInitializeResponseSerializer},
         summary="Initialize Paystack Transaction",
         description="Generates server-side secure reference (ECO-...) and returns authorized amount for checkout."
     )
@@ -648,6 +806,7 @@ class PaystackVerifyView(views.APIView):
 
     @extend_schema(
         request=PaystackVerifySerializer,
+        responses={200: PaystackVerifyResponseSerializer},
         summary="Verify Paystack Transaction & Fulfill Lot",
         description="Verifies payment with Paystack, asserts amount matches database price, and updates listing to Sold atomically."
     )
@@ -701,4 +860,3 @@ class PaystackVerifyView(views.APIView):
             'amountNgn': float(expected_price_ngn),
             'message': 'Payment verified and listing marked as Sold.'
         })
-

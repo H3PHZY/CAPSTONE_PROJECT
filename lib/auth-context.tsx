@@ -9,7 +9,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { apiFetch, setTokens, clearTokens } from "@/lib/django-auth";
+import {
+  clearTokens,
+  DjangoApiError,
+  getToken,
+  setTokens,
+} from "@/lib/django-auth";
+import { djangoRequest } from "@/lib/django-api";
 
 // ─── Exported types ───────────────────────────────────────────────────────────
 
@@ -40,6 +46,8 @@ export interface DjangoProfile {
   business_name: string;
   phone: string | null;
   cluster: string;
+  zone: string | null;
+  address: string;
   sells: boolean;
   buys: boolean;
   carbon_impact: boolean;
@@ -50,6 +58,21 @@ export interface DjangoProfile {
   lng: number | null;
   created_at: string;
 }
+
+type DjangoProfileResponse = Omit<DjangoProfile, "id" | "email"> & {
+  display_avatar_url?: string | null;
+};
+
+type DjangoUserResponse = {
+  id: string;
+  email: string;
+  profile: DjangoProfileResponse;
+};
+
+type DjangoAuthResponse = {
+  user: DjangoUserResponse;
+  tokens: { access: string; refresh: string };
+};
 
 /** Pilot trust model: business name + phone + sell/buy role → verified badge. */
 export function isPilotVerified(input: {
@@ -63,7 +86,7 @@ export function isPilotVerified(input: {
   return Boolean(name && phone && (input.sells || input.buys));
 }
 
-// ─── Context type (same surface as the old Supabase version) ─────────────────
+// ─── Auth context ────────────────────────────────────────────────────────────
 
 export interface AuthContextValue {
   isAuthenticated: boolean;
@@ -87,6 +110,10 @@ export interface AuthContextValue {
     sells: boolean;
     buys: boolean;
     carbonImpact: boolean;
+    zone?: string | null;
+    address?: string;
+    lat?: number | null;
+    lng?: number | null;
   }) => Promise<void>;
   updateAvatar: (avatarUrl: string | null) => Promise<void>;
   updateEmail: (email: string) => Promise<void>;
@@ -99,48 +126,25 @@ const DEFAULT_PREFS: AuthPrefs = { carbonImpact: false };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-/** Fetch the current user+profile from Django. Returns null on 401 / network errors. */
+function profileFromResponse(user: DjangoUserResponse): DjangoProfile {
+  return {
+    ...user.profile,
+    id: user.id,
+    email: user.email,
+    avatar_url: user.profile.display_avatar_url ?? user.profile.avatar_url,
+  };
+}
+
+/** Fetch the current user+profile from Django. An expired token is an anonymous session. */
 async function fetchMe(): Promise<DjangoProfile | null> {
+  if (!getToken()) return null;
   try {
-    const res = await apiFetch("/auth/me/");
-    if (!res.ok) return null;
-    return (await res.json()) as DjangoProfile;
-  } catch {
-    return null;
+    const user = await djangoRequest<DjangoUserResponse>("/auth/me/");
+    return profileFromResponse(user);
+  } catch (error) {
+    if (error instanceof DjangoApiError && error.status === 401) return null;
+    throw error;
   }
-}
-
-/** Call Django REST and throw on error. */
-async function djangoPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await apiFetch(path, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(
-      (data as { detail?: string; error?: string }).detail ||
-        (data as { detail?: string; error?: string }).error ||
-        JSON.stringify(data)
-    );
-  }
-  return data as T;
-}
-
-async function djangoPatch<T>(path: string, body: unknown): Promise<T> {
-  const res = await apiFetch(path, {
-    method: "PATCH",
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(
-      (data as { detail?: string; error?: string }).detail ||
-        (data as { detail?: string; error?: string }).error ||
-        JSON.stringify(data)
-    );
-  }
-  return data as T;
 }
 
 function profileToUser(p: DjangoProfile): DjangoUser {
@@ -169,6 +173,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setPrefs({ carbonImpact: Boolean(p.carbon_impact) });
       }
       setReady(true);
+    }).catch((error: unknown) => {
+      console.error("Could not restore the Django session", error);
+      if (active) setReady(true);
     });
     return () => {
       active = false;
@@ -189,51 +196,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string, signup?: SignupProfile) => {
-    type AuthResponse = { user: DjangoProfile; tokens: { access: string; refresh: string } };
-
-    let res: AuthResponse;
+    let res: DjangoAuthResponse;
     if (signup) {
-      res = await djangoPost<AuthResponse>("/auth/signup/", {
-        email,
-        password,
-        business_name: signup.businessName,
-        cluster: signup.cluster,
-        phone: signup.phone,
-        sells: signup.sells,
-        buys: signup.buys,
-        carbon_impact: signup.carbonImpact,
-        research_consent: signup.researchConsent,
+      res = await djangoRequest<DjangoAuthResponse>("/auth/signup/", {
+        method: "POST",
+        body: JSON.stringify({
+          email,
+          password,
+          business_name: signup.businessName,
+          cluster: signup.cluster,
+          phone: signup.phone,
+          sells: signup.sells,
+          buys: signup.buys,
+          carbon_impact: signup.carbonImpact,
+          research_consent: signup.researchConsent,
+        }),
       });
     } else {
-      res = await djangoPost<AuthResponse>("/auth/login/", { email, password });
+      res = await djangoRequest<DjangoAuthResponse>("/auth/login/", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
     }
 
     setTokens(res.tokens.access, res.tokens.refresh);
-
-    // Fetch the full profile after login (tokens are now in localStorage)
-    const p = await fetchMe();
-    if (p) {
-      setUser(profileToUser(p));
-      setProfile(p);
-      setPrefs({ carbonImpact: Boolean(p.carbon_impact) });
-    } else if (res.user) {
-      // Fallback: use the user object returned by signup/login
-      const u = res.user;
-      setUser(profileToUser(u));
-      setProfile(u);
-      setPrefs({ carbonImpact: Boolean(u.carbon_impact) });
-    }
-
+    const profileData = profileFromResponse(res.user);
+    setUser(profileToUser(profileData));
+    setProfile(profileData);
+    setPrefs({ carbonImpact: Boolean(profileData.carbon_impact) });
     setAuthOpen(false);
   }, []);
 
-  /** Not supported with Django JWT — use the Django admin panel or a dedicated reset flow. */
-  const requestPasswordReset = useCallback(async (_email: string) => {
-    throw new Error("Use the Django admin panel to reset passwords for now.");
+  const requestPasswordReset = useCallback(async (email: string) => {
+    await djangoRequest<{ detail: string }>("/auth/password-reset/", {
+      method: "POST",
+      body: JSON.stringify({ email: email.trim() }),
+    });
   }, []);
 
-  const updatePassword = useCallback(async (_password: string) => {
-    throw new Error("Use the Django admin panel to reset passwords for now.");
+  const updatePassword = useCallback(async (password: string) => {
+    if (password.length < 8) {
+      throw new Error("Password must be at least 8 characters.");
+    }
+    const response = await djangoRequest<DjangoUserResponse>("/auth/me/", {
+      method: "PATCH",
+      body: JSON.stringify({ password }),
+    });
+    const data = profileFromResponse(response);
+    setProfile(data);
+    setUser(profileToUser(data));
   }, []);
 
   const updateProfile = useCallback(
@@ -244,6 +255,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sells: boolean;
       buys: boolean;
       carbonImpact: boolean;
+      zone?: string | null;
+      address?: string;
+      lat?: number | null;
+      lng?: number | null;
     }) => {
       if (!patch.sells && !patch.buys) {
         throw new Error("Select at least one of sell or buy");
@@ -251,20 +266,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const businessName = patch.businessName.trim();
       const phone = patch.phone.trim();
 
-      const data = await djangoPatch<DjangoProfile>("/auth/me/", {
+      const data = profileFromResponse(
+        await djangoRequest<DjangoUserResponse>("/auth/me/", {
+          method: "PATCH",
+          body: JSON.stringify({
         business_name: businessName,
         phone: phone || null,
         cluster: patch.cluster,
         sells: patch.sells,
         buys: patch.buys,
         carbon_impact: patch.carbonImpact,
+        ...(patch.zone !== undefined ? { zone: patch.zone } : {}),
+        ...(patch.address !== undefined ? { address: patch.address } : {}),
+        ...(patch.lat !== undefined ? { lat: patch.lat } : {}),
+        ...(patch.lng !== undefined ? { lng: patch.lng } : {}),
         verified: isPilotVerified({
           businessName,
           phone,
           sells: patch.sells,
           buys: patch.buys,
         }),
-      });
+          }),
+        })
+      );
       setProfile(data);
       setPrefs({ carbonImpact: Boolean(data.carbon_impact) });
     },
@@ -272,14 +296,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const updateAvatar = useCallback(async (avatarUrl: string | null) => {
-    const data = await djangoPatch<DjangoProfile>("/auth/me/", { avatar_url: avatarUrl });
+    const response = await djangoRequest<DjangoUserResponse>("/auth/me/", {
+      method: "PATCH",
+      body: JSON.stringify({ avatar_url: avatarUrl }),
+    });
+    const data = profileFromResponse(response);
     setProfile(data);
   }, []);
 
   const updateEmail = useCallback(async (email: string) => {
     const next = email.trim();
     if (!next) throw new Error("Email is required");
-    const data = await djangoPatch<DjangoProfile>("/auth/me/", { email: next });
+    const response = await djangoRequest<DjangoUserResponse>("/auth/me/", {
+      method: "PATCH",
+      body: JSON.stringify({ email: next }),
+    });
+    const data = profileFromResponse(response);
     setProfile(data);
     setUser(profileToUser(data));
   }, []);

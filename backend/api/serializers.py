@@ -21,6 +21,8 @@ User = get_user_model()
 
 class ProfileSerializer(serializers.ModelSerializer):
     display_avatar_url = serializers.ReadOnlyField()
+    lat = serializers.FloatField(required=False, allow_null=True, min_value=-90, max_value=90)
+    lng = serializers.FloatField(required=False, allow_null=True, min_value=-180, max_value=180)
 
     class Meta:
         model = Profile
@@ -29,6 +31,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'phone',
             'cluster',
             'zone',
+            'address',
             'sells',
             'buys',
             'carbon_impact',
@@ -43,6 +46,33 @@ class ProfileSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['verified', 'created_at', 'updated_at']
+
+    def validate(self, attrs):
+        lat_provided = 'lat' in attrs
+        lng_provided = 'lng' in attrs
+        if lat_provided != lng_provided:
+            raise serializers.ValidationError(
+                {'lat': 'Latitude and longitude must be provided together.'}
+            )
+
+        address = attrs.get('address', getattr(self.instance, 'address', '')).strip()
+        address_changed = (
+            self.instance is not None
+            and 'address' in attrs
+            and address != self.instance.address
+        )
+        if address_changed and not (lat_provided and lng_provided):
+            raise serializers.ValidationError(
+                {'address': 'Resolve the updated address to coordinates before saving.'}
+            )
+
+        effective_lat = attrs.get('lat', getattr(self.instance, 'lat', None))
+        effective_lng = attrs.get('lng', getattr(self.instance, 'lng', None))
+        if address and (effective_lat is None or effective_lng is None):
+            raise serializers.ValidationError(
+                {'address': 'A saved address must have resolved latitude and longitude.'}
+            )
+        return attrs
 
 class UserSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(read_only=True)
@@ -118,6 +148,9 @@ class ListingSerializer(serializers.ModelSerializer):
     seller_name = serializers.SerializerMethodField()
     seller_cluster = serializers.SerializerMethodField()
     verified = serializers.SerializerMethodField()
+    address = serializers.SerializerMethodField()
+    lat = serializers.SerializerMethodField()
+    lng = serializers.SerializerMethodField()
     primary_photo_url = serializers.ReadOnlyField()
     all_photos = serializers.ReadOnlyField()
     distance = serializers.SerializerMethodField()
@@ -144,6 +177,7 @@ class ListingSerializer(serializers.ModelSerializer):
             'photo_urls',
             'all_photos',
             'zone',
+            'address',
             'lat',
             'lng',
             'views',
@@ -168,6 +202,24 @@ class ListingSerializer(serializers.ModelSerializer):
         profile = getattr(obj.seller, 'profile', None)
         return bool(profile.verified if profile else False)
 
+    def get_address(self, obj) -> str:
+        request = self.context.get('request')
+        if request and request.user.is_authenticated and request.user.id == obj.seller_id:
+            return obj.address
+        return ''
+
+    def _coordinates(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated and request.user.id == obj.seller_id:
+            return obj.lat, obj.lng
+        return get_coords_for_zone(obj.zone)
+
+    def get_lat(self, obj) -> float:
+        return self._coordinates(obj)[0]
+
+    def get_lng(self, obj) -> float:
+        return self._coordinates(obj)[1]
+
     def get_conf(self, obj) -> int:
         cls = getattr(obj, 'classification', None)
         if cls:
@@ -186,12 +238,25 @@ class ListingSerializer(serializers.ModelSerializer):
             viewer_cluster = request.query_params.get('cluster')
 
         viewer_lat, viewer_lon = get_coords_for_zone(viewer_cluster or 'Ogba')
+        if request and request.user.is_authenticated and hasattr(request.user, 'profile'):
+            viewer_lat = request.user.profile.lat or viewer_lat
+            viewer_lon = request.user.profile.lng or viewer_lon
+        if request:
+            try:
+                lat = float(request.query_params.get('lat', ''))
+                lng = float(request.query_params.get('lng', ''))
+                if -90 <= lat <= 90 and -180 <= lng <= 180:
+                    viewer_lat, viewer_lon = lat, lng
+            except (TypeError, ValueError):
+                pass
         listing_lat = obj.lat or viewer_lat
         listing_lon = obj.lng or viewer_lon
 
         return haversine_km(viewer_lat, viewer_lon, listing_lat, listing_lon)
 
 class ListingCreateSerializer(serializers.ModelSerializer):
+    lat = serializers.FloatField(required=False, allow_null=True, min_value=-90, max_value=90)
+    lng = serializers.FloatField(required=False, allow_null=True, min_value=-180, max_value=180)
     predicted_material = serializers.ChoiceField(choices=MaterialCategory.choices, required=False)
     confidence = serializers.DecimalField(max_digits=5, decimal_places=4, required=False, default=Decimal('0.85'))
     overridden = serializers.BooleanField(required=False, default=False)
@@ -211,12 +276,33 @@ class ListingCreateSerializer(serializers.ModelSerializer):
             'photo_url',
             'photo_urls',
             'zone',
+            'address',
+            'lat',
+            'lng',
             'predicted_material',
             'confidence',
             'overridden',
             'model_id',
             'raw_labels',
         ]
+
+    def validate(self, attrs):
+        lat_provided = 'lat' in attrs
+        lng_provided = 'lng' in attrs
+        if lat_provided != lng_provided:
+            raise serializers.ValidationError(
+                {'lat': 'Latitude and longitude must be provided together.'}
+            )
+        address = attrs.get('address', '').strip()
+        if address and (
+            not lat_provided
+            or attrs['lat'] is None
+            or attrs['lng'] is None
+        ):
+            raise serializers.ValidationError(
+                {'address': 'Resolve the pickup address to coordinates before publishing.'}
+            )
+        return attrs
 
     def create(self, validated_data):
         pred_mat = validated_data.pop('predicted_material', validated_data.get('material'))
@@ -371,3 +457,38 @@ class ClassifyRequestSerializer(serializers.Serializer):
     imageUrl = serializers.URLField(required=False, help_text="URL to waste material image")
 
 
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    password = serializers.CharField(write_only=True, min_length=8)
+
+
+class DetailResponseSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+
+
+class MediaUploadResponseSerializer(serializers.Serializer):
+    path = serializers.CharField()
+    url = serializers.URLField()
+
+
+class PaystackInitializeResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    reference = serializers.CharField()
+    listingId = serializers.UUIDField()
+    listingTitle = serializers.CharField()
+    amountNgn = serializers.DecimalField(max_digits=12, decimal_places=2)
+    amountKobo = serializers.IntegerField()
+    publicKey = serializers.CharField()
+
+
+class PaystackVerifyResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    reference = serializers.CharField()
+    listingId = serializers.UUIDField()
+    amountNgn = serializers.DecimalField(max_digits=12, decimal_places=2)
+    message = serializers.CharField()

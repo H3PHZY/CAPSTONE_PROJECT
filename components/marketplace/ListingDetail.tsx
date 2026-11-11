@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { co2Of } from "@/lib/carbon";
 import { CATS } from "@/lib/data";
-import { bumpListingViews, fetchListingById } from "@/lib/listings";
+import { fetchListingById } from "@/lib/listings";
 import { PaystackButton } from "@/components/marketplace/PaystackButton";
 import { GoogleMapLocation } from "@/components/marketplace/GoogleMapLocation";
 import type { Listing } from "@/lib/types";
@@ -35,7 +35,10 @@ export function ListingDetail({ id }: ListingDetailProps) {
     setError(null);
     setActivePhoto(null);
 
-    void fetchListingById(id, profile?.cluster)
+    void fetchListingById(id, profile?.cluster, {
+      lat: profile?.lat ?? null,
+      lng: profile?.lng ?? null,
+    })
       .then((row) => {
         if (!active) return;
         if (!row) {
@@ -51,9 +54,6 @@ export function ListingDetail({ id }: ListingDetailProps) {
               ? [row.photoUrl]
               : [];
         setActivePhoto(gallery[0] ?? null);
-        if (typeof row.views === "number") {
-          void bumpListingViews(row.id, row.views);
-        }
       })
       .catch((err) => {
         if (!active) return;
@@ -65,7 +65,7 @@ export function ListingDetail({ id }: ListingDetailProps) {
     return () => {
       active = false;
     };
-  }, [id, profile?.cluster]);
+  }, [id, profile?.cluster, profile?.lat, profile?.lng]);
 
   if (loading) {
     return (
@@ -351,7 +351,7 @@ export function ListingDetail({ id }: ListingDetailProps) {
               distance={listing.distance}
             />
             <div className="map-meta">
-              <div>{listing.zone}, Lagos State</div>
+              <div>{listing.address || `${listing.zone}, Lagos State`}</div>
               <div className="map-meta-sub">
                 Exact address shared after contact is accepted
               </div>

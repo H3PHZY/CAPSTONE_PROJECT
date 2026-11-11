@@ -1,27 +1,18 @@
 # EcoLoop Django REST API
 
-This Django REST API replaces the Supabase backend configuration for the **EcoLoop** industrial waste redistribution marketplace. It maintains all schema structures, constraints, business logic, authorization rules, and external integrations (Hugging Face AI & Paystack).
+This Django REST API powers the **EcoLoop** industrial waste redistribution marketplace. It manages the marketplace schema, business logic, authorization rules, and integrations such as Hugging Face AI and Paystack.
 
 ---
 
-## 1. Supabase to Django Migration Mapping
+## 1. Backend Architecture
 
-| Supabase Feature | Supabase Origin | Django Component | Location |
+| Area | Django component | Location |
 |---|---|---|---|
-| **Profiles Table** | `001_initial_schema.sql` | `Profile` model (1:1 with `User`) | [`backend/api/models.py`](api/models.py) |
-| **Listings Table** | `001_initial_schema.sql`, `008_listing_photo_urls.sql` | `Listing` model with `photo_urls` gallery | [`backend/api/models.py`](api/models.py) |
-| **Classifications Table** | `001_initial_schema.sql` | `Classification` model (1:1 with `Listing`) | [`backend/api/models.py`](api/models.py) |
-| **Transactions Table** | `001_initial_schema.sql`, `004_chat_replies_and_pay.sql` | `Transaction` model with `payment_ref` | [`backend/api/models.py`](api/models.py) |
-| **Carbon Records Table** | `001_initial_schema.sql` | `CarbonRecord` model (1:1 with `Transaction`) | [`backend/api/models.py`](api/models.py) |
-| **Messages Table** | `001_initial_schema.sql`, `011_message_attachments.sql` | `Message` model with reply_to & attachments | [`backend/api/models.py`](api/models.py) |
-| **User Trigger** (`handle_new_user`) | `001_initial_schema.sql` | `post_save` signal on User | [`backend/api/signals.py`](api/signals.py) |
-| **Listing Status Trigger** (`apply_transaction_listing_status`) | `002_transaction_listing_sync.sql` | `post_save` signal on Transaction | [`backend/api/signals.py`](api/signals.py) |
-| **Pilot Trust Verification** | `007_pilot_verify_complete_profiles.sql` | `is_pilot_verified()` helper in `Profile.save()` | [`backend/api/utils.py`](api/utils.py) |
-| **Listing Deletion Policy** | `009_seller_delete_listings.sql` | `CanDeleteListing` permission + `perform_destroy` | [`backend/api/permissions.py`](api/permissions.py) |
-| **Row Level Security (RLS)** | `001_initial_schema.sql`, `010_public_live_listings.sql` | Custom DRF Permissions | [`backend/api/permissions.py`](api/permissions.py) |
-| **Storage Buckets** | `listing-photos`, `message-attachments`, `profile-avatars` | Django `ImageField` / `FileField` media storage | [`backend/media/`](media/) |
-| **AI Classification Route** | `app/api/classify/route.ts` | `ClassifyView` (with Pillow downscaling & HF API) | [`backend/api/views.py`](api/views.py) |
-| **Paystack Verify Route** | `app/api/pay/verify/route.ts` | `PaystackVerifyView` (with amount guard) | [`backend/api/views.py`](api/views.py) |
+| Models | Profiles, listings, classifications, transactions, carbon records, and messages | [`api/models.py`](api/models.py) |
+| Authorization | Django REST Framework permissions | [`api/permissions.py`](api/permissions.py) |
+| Business events | Django model signals | [`api/signals.py`](api/signals.py) |
+| API endpoints | Authentication, listings, transactions, messages, media, classification, and payments | [`api/views.py`](api/views.py) |
+| Media storage | Django storage backend; Cloudinary in production | [`ecoloop/settings.py`](ecoloop/settings.py) |
 
 ---
 
@@ -33,12 +24,14 @@ This Django REST API replaces the Supabase backend configuration for the **EcoLo
 * `POST /api/auth/refresh/` — Obtain fresh access token using refresh token.
 * `GET /api/auth/me/` — Fetch current user profile, cluster, and verification badge status.
 * `PATCH /api/auth/me/` — Update profile metadata, avatar, email, or password.
+* `POST /api/auth/password-reset/` and `POST /api/auth/password-reset/confirm/` — Request and complete a password reset.
 
 ### Marketplace & Listings
 * `GET /api/listings/` — Browse listings (Public). Supports filtering:
   * `?q=aluminium` (keyword search)
   * `?category=Metal` (material filter)
   * `?radius=10` (radial distance in km via Haversine formula)
+  * `?lat={latitude}&lng={longitude}` (search origin; otherwise uses the signed-in user's saved location)
   * `?verified_only=true` (verified sellers only)
   * `?sort=Nearest first|Heaviest first|Lowest price`
 * `POST /api/listings/` — Create new live listing + classification record atomically.
@@ -47,6 +40,8 @@ This Django REST API replaces the Supabase backend configuration for the **EcoLo
 * `DELETE /api/listings/{id}/` — Delete open Draft/Live listing (clears open interest first).
 * `GET /api/listings/mine/` — Seller workspace view of all owned listings.
 * `POST /api/listings/{id}/add_photos/` — Upload extra product gallery photos.
+* Listing create/update accepts an address and coordinates. Public listings expose an approximate zone location; exact address and coordinates are restricted to the owner.
+* `POST /api/media/upload/` â€” Upload a listing photo, message attachment, or profile avatar through Django's configured storage backend.
 
 ### Transactions
 * `GET /api/transactions/` — List user's transactions (buyer or seller).
@@ -61,7 +56,9 @@ This Django REST API replaces the Supabase backend configuration for the **EcoLo
 ### Carbon Analytics & External Integrations
 * `GET /api/impact/` — User's aggregated carbon savings, monthly trend, material breakdown, and tree/petrol/flight equivalencies.
 * `POST /api/classify/` — Classify waste photo using Hugging Face (supports file upload or URL).
+* `POST /api/pay/initialize/` â€” Lock an available listing and return its database price in kobo plus a server-generated payment reference.
 * `POST /api/pay/verify/` — Verify Paystack reference, check kobo amount, and mark listing as Sold.
+* `GET /api/schema/`, `/api/docs/`, and `/api/redoc/` — OpenAPI schema and interactive documentation.
 
 ---
 
@@ -96,13 +93,12 @@ This Django REST API replaces the Supabase backend configuration for the **EcoLo
 
 4. **Configure environment variables**:
    ```bash
-   cp .env.example .env
-   # Add your HF_TOKEN and PAYSTACK_SECRET_KEY in .env
+   Copy-Item .env.example .env
+   # Set the required database and API credentials in .env
    ```
 
 5. **Apply database migrations**:
    ```bash
-   python manage.py makemigrations api
    python manage.py migrate
    ```
 
@@ -125,8 +121,9 @@ Open your browser to `http://127.0.0.1:8000/admin/` to inspect the Django Admin 
 To connect the Next.js frontend to this Django API:
 1. Update `.env.local` in the Next.js project:
    ```bash
-   NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api
+   NEXT_PUBLIC_DJANGO_API_URL=http://127.0.0.1:8000/api
    ```
-2. Store the JWT token in `localStorage` or httpOnly cookies upon login/signup.
-3. Pass `Authorization: Bearer <access_token>` in API request headers.
+2. The frontend auth context manages JWT access and refresh tokens and adds bearer authorization to protected requests. API calls use `NEXT_PUBLIC_DJANGO_API_URL` as the API root.
+3. Messages and notification badges poll the Django API at short intervals; no Supabase realtime connection is required.
 
+For production deployment, configure Django environment variables and deploy the frontend separately. See the repository's [deployment guide](../README.md#production-deployment) for Render and Vercel setup, Cloudinary media credentials, and CORS/CSRF origins.

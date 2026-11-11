@@ -30,7 +30,6 @@ import {
   type AttachmentPreview,
 } from "@/components/messages/AttachmentLightbox";
 import { ProfileAvatar } from "@/components/ui/ProfileAvatar";
-import { supabase } from "@/lib/supabase";
 
 export function MessagesPage() {
   const router = useRouter();
@@ -78,6 +77,8 @@ export function MessagesPage() {
         preview: "Start the conversation",
         timeLabel: "Now",
         updatedAt: new Date().toISOString(),
+        lastMessageId: "",
+        lastSenderId: "",
       } satisfies MessageThread;
     }
     return threads.find((t) => t.key === activeKey) ?? threads[0] ?? null;
@@ -100,18 +101,6 @@ export function MessagesPage() {
     const inbox = await fetchInbox(user.id);
     setThreads(inbox);
     return inbox;
-  }, [user]);
-
-  const refreshActiveThread = useCallback(async () => {
-    if (!user) return;
-    const current = activeRef.current;
-    if (!current || current.key.startsWith("new:")) return;
-    const rows = await fetchThreadMessages(
-      user.id,
-      current.listingId,
-      current.otherUserId
-    );
-    setMsgs(rows);
   }, [user]);
 
   useEffect(() => {
@@ -189,92 +178,56 @@ export function MessagesPage() {
     };
   }, [user, active?.key, active?.listingId, active?.otherUserId]);
 
-  // Live inbox + open thread while on Messages
+  // Keep the inbox and active thread fresh without a realtime provider.
   useEffect(() => {
     if (!user) return;
 
-    let debounce: ReturnType<typeof setTimeout> | null = null;
-
-    const onMessageEvent = (payload: {
-      new: Record<string, unknown>;
-    }) => {
-      const row = payload.new as {
-        sender_id?: string;
-        recipient_id?: string;
-        listing_id?: string;
-      };
-      if (row.sender_id !== user.id && row.recipient_id !== user.id) return;
-
-      if (debounce) clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        void (async () => {
-          try {
-            const inbox = await reloadInbox();
-            const current = activeRef.current;
-
-            // First message on a "new" pending contact → promote to real thread
-            if (
-              current?.key.startsWith("new:") &&
-              row.listing_id === current.listingId
-            ) {
-              const match = inbox.find(
-                (t) =>
-                  t.listingId === current.listingId &&
-                  t.otherUserId === current.otherUserId
-              );
-              if (match) {
-                setPendingContact(null);
-                setActiveKey(match.key);
-              }
-            }
-
-            if (
-              current &&
-              !current.key.startsWith("new:") &&
-              row.listing_id === current.listingId &&
-              (row.sender_id === current.otherUserId ||
-                row.recipient_id === current.otherUserId ||
-                row.sender_id === user.id ||
-                row.recipient_id === user.id)
-            ) {
-              await refreshActiveThread();
-            }
-          } catch {
-            // Keep last good UI; next event can retry
+    let activeEffect = true;
+    let polling = false;
+    const poll = async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const inbox = await reloadInbox();
+        if (!activeEffect) return;
+        let current = activeRef.current;
+        if (current?.key.startsWith("new:")) {
+          const match = inbox.find(
+            (thread) =>
+              thread.listingId === current?.listingId &&
+              thread.otherUserId === current?.otherUserId
+          );
+          if (match) {
+            setPendingContact(null);
+            setActiveKey(match.key);
+            current = match;
           }
-        })();
-      }, 120);
+        }
+        if (current && !current.key.startsWith("new:")) {
+          const rows = await fetchThreadMessages(
+            user.id,
+            current.listingId,
+            current.otherUserId
+          );
+          if (activeEffect && activeRef.current?.key === current.key) {
+            setMsgs(rows);
+          }
+        }
+      } catch (reason) {
+        if (activeEffect) {
+          setError(reason instanceof Error ? reason.message : "Could not refresh messages");
+        }
+      } finally {
+        polling = false;
+      }
     };
 
-    const channel = supabase
-      .channel(`messages-page:${user.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `recipient_id=eq.${user.id}`,
-        },
-        onMessageEvent
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "messages",
-          filter: `sender_id=eq.${user.id}`,
-        },
-        onMessageEvent
-      )
-      .subscribe();
-
+    const interval = setInterval(() => void poll(), 5000);
     return () => {
-      if (debounce) clearTimeout(debounce);
-      void supabase.removeChannel(channel);
+      activeEffect = false;
+      clearInterval(interval);
     };
-  }, [user, reloadInbox, refreshActiveThread]);
+  }, [user, reloadInbox]);
 
   useEffect(() => {
     const el = msgsBodyRef.current;
@@ -400,13 +353,7 @@ export function MessagesPage() {
     } catch (err) {
       setSending(false);
       const message = err instanceof Error ? err.message : "Send failed";
-      if (/bucket|message-attachments|not found/i.test(message)) {
-        setError(
-          "Run supabase/migrations/011_message_attachments.sql in the Supabase SQL Editor, then try again."
-        );
-      } else {
-        setError(message);
-      }
+      setError(message);
     }
   }
 

@@ -32,6 +32,7 @@ export interface Listing {
   verified: boolean;
   conf: number;
   zone: string;
+  address?: string;
   lat?: number;
   lng?: number;
   /** Label or remote photo URL */
