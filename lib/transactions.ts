@@ -1,4 +1,4 @@
-import { CO2, co2FromWeight } from "@/lib/carbon";
+import { co2FromWeight, CO2 } from "@/lib/carbon";
 import type { MaterialCategory, TransactionStatus } from "@/lib/database.types";
 import { formatPriceNgn } from "@/lib/listings";
 import { supabase } from "@/lib/supabase";
@@ -11,15 +11,11 @@ export type TransactionView = {
   sellerId: string;
   status: TransactionStatus;
   completedAt: string | null;
-  paidAt: string | null;
-  paymentRef: string | null;
   createdAt: string;
   listingTitle: string;
   material: MaterialCategory;
   weightKg: number;
   priceNgn: number | null;
-  listingPriceNgn: number | null;
-  dealPriceNgn: number | null;
   counterpartyName: string;
   co2eKg: number | null;
 };
@@ -31,9 +27,6 @@ type TxnJoin = {
   seller_id: string;
   status: TransactionStatus;
   completed_at: string | null;
-  payment_ref?: string | null;
-  paid_at?: string | null;
-  deal_price_ngn?: number | null;
   created_at: string;
   listing?: {
     id: string;
@@ -61,13 +54,6 @@ const TXN_SELECT = `
   carbon_records ( co2e_kg )
 `;
 
-function effectivePriceNgn(row: TxnJoin): number | null {
-  if (row.deal_price_ngn != null && Number(row.deal_price_ngn) > 0) {
-    return Number(row.deal_price_ngn);
-  }
-  return row.listing?.price_ngn ?? null;
-}
-
 function carbonOf(row: TxnJoin): number | null {
   const raw = row.carbon_records;
   if (!raw) return null;
@@ -85,15 +71,11 @@ function mapTxn(row: TxnJoin, viewerId: string): TransactionView {
     sellerId: row.seller_id,
     status: row.status,
     completedAt: row.completed_at,
-    paidAt: row.paid_at ?? null,
-    paymentRef: row.payment_ref ?? null,
     createdAt: row.created_at,
     listingTitle: row.listing?.title || "Listing",
     material: (row.listing?.material || "Metal") as MaterialCategory,
     weightKg: Number(row.listing?.weight_kg || 0),
-    listingPriceNgn: row.listing?.price_ngn ?? null,
-    dealPriceNgn: row.deal_price_ngn ?? null,
-    priceNgn: effectivePriceNgn(row),
+    priceNgn: row.listing?.price_ngn ?? null,
     counterpartyName: counterparty?.business_name || "EcoLoop user",
     co2eKg: carbonOf(row),
   };
@@ -113,7 +95,7 @@ export async function findTransactionForPair(
     .maybeSingle();
 
   if (error) throw error;
-  return data as unknown as TxnJoin | null;
+  return data as TxnJoin | null;
 }
 
 export async function getPairTransactionView(
@@ -132,57 +114,84 @@ export async function markAsAgreed(input: {
   sellerId: string;
   actorId: string;
 }) {
-  const { error } = await supabase.rpc("reserve_listing_for_buyer", {
-    p_listing_id: input.listingId,
-    p_buyer_id: input.buyerId,
-    p_seller_id: input.sellerId,
-  });
-  if (error) throw error;
-
-  const row = await findTransactionForPair(
-    input.listingId,
-    input.buyerId,
-    input.sellerId
-  );
-  if (!row) throw new Error("Reservation succeeded but could not reload the deal");
-  return mapTxn(row, input.actorId);
-}
-
-export async function setDealPrice(input: {
-  listingId: string;
-  buyerId: string;
-  sellerId: string;
-  actorId: string;
-  priceNgn: number;
-}) {
+  if (input.buyerId === input.sellerId) {
+    throw new Error("Buyer and seller must be different users");
+  }
+  // Only the seller reserves the lot — they choose which buyer gets it.
   if (input.actorId !== input.sellerId) {
-    throw new Error("Only the seller can set the price for this buyer");
-  }
-  const amount = Math.round(Number(input.priceNgn));
-  if (!(amount > 0)) {
-    throw new Error("Enter a price greater than zero");
+    throw new Error("Only the seller can mark a deal as agreed");
   }
 
-  const row = await findTransactionForPair(
+  const { data: listing, error: listingError } = await supabase
+    .from("listings")
+    .select("id, status, seller_id")
+    .eq("id", input.listingId)
+    .maybeSingle();
+  if (listingError) throw listingError;
+  if (!listing || listing.seller_id !== input.sellerId) {
+    throw new Error("Listing not found");
+  }
+  if (listing.status === "Sold") {
+    throw new Error("This listing is already sold");
+  }
+
+  // Another buyer already holds this lot
+  const { data: otherHold, error: holdError } = await supabase
+    .from("transactions")
+    .select("id, buyer_id, status")
+    .eq("listing_id", input.listingId)
+    .in("status", ["Reserved", "Completed"])
+    .neq("buyer_id", input.buyerId)
+    .limit(1)
+    .maybeSingle();
+  if (holdError) throw holdError;
+  if (otherHold) {
+    throw new Error(
+      "This listing is already reserved for another buyer. Complete or cancel that deal first."
+    );
+  }
+
+  let row = await findTransactionForPair(
     input.listingId,
     input.buyerId,
     input.sellerId
   );
-  if (!row) throw new Error("Reserve this buyer first, then set a price");
+
+  if (!row) {
+    const { data, error } = await supabase
+      .from("transactions")
+      .insert({
+        listing_id: input.listingId,
+        buyer_id: input.buyerId,
+        seller_id: input.sellerId,
+        status: "Reserved",
+      })
+      .select(TXN_SELECT)
+      .single();
+    if (error) throw error;
+    return mapTxn(data as TxnJoin, input.actorId);
+  }
+
+  if (row.status === "Completed") {
+    throw new Error("This exchange is already completed");
+  }
+  if (row.status === "Cancelled") {
+    throw new Error("This exchange was cancelled");
+  }
+
   if (row.status !== "Reserved") {
-    throw new Error("Reserve this buyer before setting a deal price");
+    const { data, error } = await supabase
+      .from("transactions")
+      .update({ status: "Reserved" })
+      .eq("id", row.id)
+      .select(TXN_SELECT)
+      .single();
+    if (error) throw error;
+    row = data as TxnJoin;
   }
-  if (row.paid_at) {
-    throw new Error("Price cannot change after payment");
-  }
-  const { data, error } = await supabase
-    .from("transactions")
-    .update({ deal_price_ngn: amount })
-    .eq("id", row.id)
-    .select(TXN_SELECT)
-    .single();
-  if (error) throw error;
-  return mapTxn(data as unknown as TxnJoin, input.actorId);
+
+  // Listing status synced by DB trigger (002_transaction_listing_sync.sql)
+  return mapTxn(row, input.actorId);
 }
 
 export async function markExchangeCompleted(input: {
@@ -191,7 +200,7 @@ export async function markExchangeCompleted(input: {
   sellerId: string;
   actorId: string;
 }) {
-  const row = await findTransactionForPair(
+  let row = await findTransactionForPair(
     input.listingId,
     input.buyerId,
     input.sellerId
@@ -200,24 +209,17 @@ export async function markExchangeCompleted(input: {
   if (!row || row.status === "Interest") {
     throw new Error("Reserve this buyer first, then mark the exchange completed");
   }
-
-  if (!row) throw new Error("Could not create transaction");
   if (row.status === "Completed") return mapTxn(row, input.actorId);
   if (row.status === "Cancelled") {
     throw new Error("This exchange was cancelled");
-  }
-
-  const priceNgn = Number(effectivePriceNgn(row) ?? 0);
-  if (priceNgn > 0 && !row.paid_at) {
-    throw new Error("Wait for payment to confirm before marking this exchange completed");
   }
 
   const material = (row.listing?.material || "Metal") as MaterialCategory;
   const weightKg = Number(row.listing?.weight_kg || 0);
   if (weightKg <= 0) throw new Error("Listing weight is missing");
 
-  const factor = CO2[material] ?? 1;
   const co2eKg = co2FromWeight(weightKg, material);
+  const factor = CO2[material] ?? 1;
 
   const { error } = await supabase
     .from("transactions")
@@ -252,24 +254,6 @@ export async function markExchangeCompleted(input: {
   return mapTxn(refreshed, input.actorId);
 }
 
-export function transactionRef(id: string) {
-  return `ECL-${id.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
-}
-
-export async function fetchTransactionById(id: string, viewerId: string) {
-  const { data, error } = await supabase
-    .from("transactions")
-    .select(TXN_SELECT)
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) return null;
-  const row = data as unknown as TxnJoin;
-  if (row.buyer_id !== viewerId && row.seller_id !== viewerId) return null;
-  return mapTxn(row, viewerId);
-}
-
 export async function fetchMyTransactions(userId: string) {
   const { data, error } = await supabase
     .from("transactions")
@@ -278,7 +262,7 @@ export async function fetchMyTransactions(userId: string) {
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return ((data ?? []) as unknown as TxnJoin[]).map((row) => mapTxn(row, userId));
+  return ((data ?? []) as TxnJoin[]).map((row) => mapTxn(row, userId));
 }
 
 export type CarbonImpactSummary = {
@@ -312,9 +296,11 @@ export async function fetchCarbonImpact(userId: string): Promise<CarbonImpactSum
     number,
   ][];
 
+  // Derive a per-month target from the annual pilot goal (3 000 kg / 12 months)
+  const PILOT_GOAL_KG = 3_000;
+  const monthlyTarget = Math.round(PILOT_GOAL_KG / 12);
   const byMonth = [...monthMap.entries()].map(([month, val]) => {
-    const target = Math.max(val, 500);
-    return [month, val, target] as [string, number, number];
+    return [month, val, Math.max(val, monthlyTarget)] as [string, number, number];
   });
 
   const recent: Txn[] = completed.slice(0, 12).map((t) => ({

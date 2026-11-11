@@ -1,0 +1,1855 @@
+openapi: 3.0.3
+info:
+  title: EcoLoop REST API
+  version: 1.0.0
+  description: Industrial waste marketplace API for Lagos SME clusters (BSE Capstone
+    Study).
+paths:
+  /api/auth/login/:
+    post:
+      operationId: auth_login_create
+      description: Authenticates via email and password, returning JWT access and
+        refresh tokens.
+      summary: Log in user
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LoginRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LoginRequestRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+  /api/auth/me/:
+    get:
+      operationId: auth_me_retrieve
+      description: Returns currently authenticated user data and their linked profile.
+      summary: Get current user profile
+      tags:
+      - auth
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+    patch:
+      operationId: auth_me_partial_update
+      description: Partially updates profile metadata, business info, or user email/password.
+      summary: Update current user profile
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedProfileRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedProfileRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedProfileRequest'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+  /api/auth/refresh/:
+    post:
+      operationId: auth_refresh_create
+      description: |-
+        Takes a refresh type JSON web token and returns an access type JSON web
+        token if the refresh token is valid.
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefresh'
+          description: ''
+  /api/auth/signup/:
+    post:
+      operationId: auth_signup_create
+      description: Creates an account, automatically generates an linked Profile,
+        and returns JWT tokens.
+      summary: Register a new user
+      tags:
+      - auth
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+          description: ''
+  /api/classify/:
+    post:
+      operationId: classify_create
+      description: Classifies waste material images (Plastic, Glass, Metal, Biodegradable,
+        Rubber) via Hugging Face Vision Transformer.
+      summary: AI Waste Material Classification
+      tags:
+      - classify
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClassifyRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ClassifyRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ClassifyRequestRequest'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/impact/:
+    get:
+      operationId: impact_retrieve
+      description: Returns user's cumulative CO2e diverted, tonnage, material breakdowns,
+        and equivalencies.
+      summary: Get carbon footprint analytics
+      tags:
+      - impact
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/listings/:
+    get:
+      operationId: listings_list
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - listings
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedListingList'
+          description: ''
+    post:
+      operationId: listings_create
+      tags:
+      - listings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListingCreateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ListingCreateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ListingCreateRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListingCreate'
+          description: ''
+  /api/listings/{id}/:
+    get:
+      operationId: listings_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - listings
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+          description: ''
+    put:
+      operationId: listings_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - listings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListingRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ListingRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ListingRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+          description: ''
+    patch:
+      operationId: listings_partial_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - listings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedListingRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedListingRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedListingRequest'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+          description: ''
+    delete:
+      operationId: listings_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - listings
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/listings/{id}/add_photos/:
+    post:
+      operationId: listings_add_photos_create
+      description: Allows seller to upload extra gallery photos.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - listings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListingRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ListingRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ListingRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+          description: ''
+  /api/listings/mine/:
+    get:
+      operationId: listings_mine_retrieve
+      description: Returns the authenticated seller's inventory across all statuses.
+      tags:
+      - listings
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+          description: ''
+  /api/messages/:
+    get:
+      operationId: messages_list
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - messages
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedMessageList'
+          description: ''
+    post:
+      operationId: messages_create
+      tags:
+      - messages
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MessageRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MessageRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+  /api/messages/{id}/:
+    get:
+      operationId: messages_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - messages
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+    put:
+      operationId: messages_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - messages
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MessageRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MessageRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+    patch:
+      operationId: messages_partial_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - messages
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedMessageRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedMessageRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedMessageRequest'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+    delete:
+      operationId: messages_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - messages
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/messages/inbox/:
+    get:
+      operationId: messages_inbox_retrieve
+      description: Groups user messages into distinct listing threads.
+      tags:
+      - messages
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+  /api/messages/thread/:
+    get:
+      operationId: messages_thread_retrieve
+      description: Returns messages between the user and counterparty for a listing.
+      tags:
+      - messages
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+  /api/pay/initialize/:
+    post:
+      operationId: pay_initialize_create
+      description: Generates server-side secure reference (ECO-...) and returns authorized
+        amount for checkout.
+      summary: Initialize Paystack Transaction
+      tags:
+      - pay
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaystackInitializeRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PaystackInitializeRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PaystackInitializeRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/pay/verify/:
+    post:
+      operationId: pay_verify_create
+      description: Verifies payment with Paystack, asserts amount matches database
+        price, and updates listing to Sold atomically.
+      summary: Verify Paystack Transaction & Fulfill Lot
+      tags:
+      - pay
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaystackVerifyRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PaystackVerifyRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PaystackVerifyRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/transactions/:
+    get:
+      operationId: transactions_list
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - transactions
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedTransactionList'
+          description: ''
+    post:
+      operationId: transactions_create
+      tags:
+      - transactions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+          description: ''
+  /api/transactions/{id}/:
+    get:
+      operationId: transactions_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - transactions
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+          description: ''
+    put:
+      operationId: transactions_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - transactions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+          description: ''
+    patch:
+      operationId: transactions_partial_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - transactions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedTransactionRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedTransactionRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedTransactionRequest'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+          description: ''
+    delete:
+      operationId: transactions_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - transactions
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/transactions/mark_agreed/:
+    post:
+      operationId: transactions_mark_agreed_create
+      description: |-
+        Seller marks listing as agreed/reserved for a specific buyer.
+        Uses database-level row locking (select_for_update) to prevent race conditions.
+      tags:
+      - transactions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+          description: ''
+  /api/transactions/mark_completed/:
+    post:
+      operationId: transactions_mark_completed_create
+      description: Marks a reserved exchange as completed with atomic locking.
+      tags:
+      - transactions
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TransactionRequest'
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transaction'
+          description: ''
+components:
+  schemas:
+    Classification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        predicted_material:
+          $ref: '#/components/schemas/MaterialEnum'
+        confidence:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,1}(?:\.\d{0,4})?$
+        confidence_pct:
+          type: integer
+          readOnly: true
+        overridden:
+          type: boolean
+        final_material:
+          $ref: '#/components/schemas/MaterialEnum'
+        model_id:
+          type: string
+          nullable: true
+          maxLength: 255
+        raw_labels:
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - confidence
+      - confidence_pct
+      - created_at
+      - final_material
+      - id
+      - predicted_material
+    ClassificationRequest:
+      type: object
+      properties:
+        predicted_material:
+          $ref: '#/components/schemas/MaterialEnum'
+        confidence:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,1}(?:\.\d{0,4})?$
+        overridden:
+          type: boolean
+        final_material:
+          $ref: '#/components/schemas/MaterialEnum'
+        model_id:
+          type: string
+          nullable: true
+          maxLength: 255
+        raw_labels:
+          nullable: true
+      required:
+      - confidence
+      - final_material
+      - predicted_material
+    ClassifyRequestRequest:
+      type: object
+      properties:
+        image:
+          type: string
+          format: binary
+          description: Waste material image file
+        imageUrl:
+          type: string
+          format: uri
+          minLength: 1
+          description: URL to waste material image
+    Listing:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        seller_id:
+          type: string
+          readOnly: true
+        seller_name:
+          type: string
+          readOnly: true
+        seller_cluster:
+          type: string
+          readOnly: true
+        verified:
+          type: boolean
+          readOnly: true
+        title:
+          type: string
+          maxLength: 255
+        material:
+          $ref: '#/components/schemas/MaterialEnum'
+        weight_kg:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        price_ngn:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        status:
+          $ref: '#/components/schemas/Status09eEnum'
+        photo:
+          type: string
+          format: uri
+          nullable: true
+        photo_url:
+          nullable: true
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 1000
+          - type: string
+            maxLength: 0
+        primary_photo_url:
+          type: string
+          nullable: true
+          readOnly: true
+        photo_urls: {}
+        all_photos:
+          type: array
+          items:
+            type: string
+          readOnly: true
+        zone:
+          type: string
+          maxLength: 100
+        lat:
+          type: number
+          format: double
+          nullable: true
+        lng:
+          type: number
+          format: double
+          nullable: true
+        views:
+          type: integer
+          readOnly: true
+        distance:
+          type: number
+          format: double
+          readOnly: true
+        co2_saved:
+          type: integer
+          readOnly: true
+        conf:
+          type: integer
+          readOnly: true
+        classification:
+          allOf:
+          - $ref: '#/components/schemas/Classification'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - all_photos
+      - classification
+      - co2_saved
+      - conf
+      - created_at
+      - distance
+      - id
+      - material
+      - primary_photo_url
+      - seller_cluster
+      - seller_id
+      - seller_name
+      - title
+      - updated_at
+      - verified
+      - views
+      - weight_kg
+    ListingCreate:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        title:
+          type: string
+          maxLength: 255
+        material:
+          $ref: '#/components/schemas/MaterialEnum'
+        weight_kg:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        price_ngn:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        status:
+          $ref: '#/components/schemas/Status09eEnum'
+        photo:
+          type: string
+          format: uri
+          nullable: true
+        photo_url:
+          nullable: true
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 1000
+          - type: string
+            maxLength: 0
+        photo_urls: {}
+        zone:
+          type: string
+          maxLength: 100
+        predicted_material:
+          $ref: '#/components/schemas/MaterialEnum'
+        confidence:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,1}(?:\.\d{0,4})?$
+          default: '0.8500'
+        overridden:
+          type: boolean
+          default: false
+        model_id:
+          type: string
+          default: hf-endpoint
+        raw_labels: {}
+      required:
+      - id
+      - material
+      - title
+      - weight_kg
+    ListingCreateRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        material:
+          $ref: '#/components/schemas/MaterialEnum'
+        weight_kg:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        price_ngn:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        status:
+          $ref: '#/components/schemas/Status09eEnum'
+        photo:
+          type: string
+          format: binary
+          nullable: true
+        photo_url:
+          nullable: true
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 1000
+          - type: string
+            maxLength: 0
+        photo_urls: {}
+        zone:
+          type: string
+          minLength: 1
+          maxLength: 100
+        predicted_material:
+          $ref: '#/components/schemas/MaterialEnum'
+        confidence:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,1}(?:\.\d{0,4})?$
+          default: '0.8500'
+        overridden:
+          type: boolean
+          default: false
+        model_id:
+          type: string
+          default: hf-endpoint
+        raw_labels: {}
+      required:
+      - material
+      - title
+      - weight_kg
+    ListingRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        material:
+          $ref: '#/components/schemas/MaterialEnum'
+        weight_kg:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        price_ngn:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        status:
+          $ref: '#/components/schemas/Status09eEnum'
+        photo:
+          type: string
+          format: binary
+          nullable: true
+        photo_url:
+          nullable: true
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 1000
+          - type: string
+            maxLength: 0
+        photo_urls: {}
+        zone:
+          type: string
+          minLength: 1
+          maxLength: 100
+        lat:
+          type: number
+          format: double
+          nullable: true
+        lng:
+          type: number
+          format: double
+          nullable: true
+      required:
+      - material
+      - title
+      - weight_kg
+    LoginRequestRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+          description: Registered user email
+        password:
+          type: string
+          writeOnly: true
+          minLength: 1
+      required:
+      - email
+      - password
+    MaterialEnum:
+      enum:
+      - Plastic
+      - Glass
+      - Metal
+      - Biodegradable
+      - Rubber
+      type: string
+      description: |-
+        * `Plastic` - Plastic
+        * `Glass` - Glass
+        * `Metal` - Metal
+        * `Biodegradable` - Biodegradable
+        * `Rubber` - Rubber
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        listing:
+          type: string
+          format: uuid
+        sender:
+          type: integer
+          readOnly: true
+        recipient:
+          type: integer
+        body:
+          type: string
+        reply_to:
+          type: string
+          format: uuid
+          nullable: true
+        reply_text:
+          type: string
+          nullable: true
+          readOnly: true
+        image_url:
+          type: string
+          nullable: true
+          maxLength: 1000
+        attachment:
+          type: string
+          format: uri
+          nullable: true
+        attachment_name:
+          type: string
+          nullable: true
+          maxLength: 255
+        attachment_mime:
+          type: string
+          nullable: true
+          maxLength: 100
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        me:
+          type: boolean
+          readOnly: true
+        sender_name:
+          type: string
+          readOnly: true
+        sender_avatar_url:
+          type: string
+          nullable: true
+          readOnly: true
+        time:
+          type: string
+          readOnly: true
+      required:
+      - body
+      - created_at
+      - id
+      - listing
+      - me
+      - recipient
+      - reply_text
+      - sender
+      - sender_avatar_url
+      - sender_name
+      - time
+    MessageRequest:
+      type: object
+      properties:
+        listing:
+          type: string
+          format: uuid
+        recipient:
+          type: integer
+        body:
+          type: string
+          minLength: 1
+        reply_to:
+          type: string
+          format: uuid
+          nullable: true
+        image_url:
+          type: string
+          nullable: true
+          maxLength: 1000
+        attachment:
+          type: string
+          format: binary
+          nullable: true
+        attachment_name:
+          type: string
+          nullable: true
+          maxLength: 255
+        attachment_mime:
+          type: string
+          nullable: true
+          maxLength: 100
+      required:
+      - body
+      - listing
+      - recipient
+    PaginatedListingList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Listing'
+    PaginatedMessageList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+    PaginatedTransactionList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Transaction'
+    PatchedListingRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 255
+        material:
+          $ref: '#/components/schemas/MaterialEnum'
+        weight_kg:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+        price_ngn:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          nullable: true
+        status:
+          $ref: '#/components/schemas/Status09eEnum'
+        photo:
+          type: string
+          format: binary
+          nullable: true
+        photo_url:
+          nullable: true
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 1000
+          - type: string
+            maxLength: 0
+        photo_urls: {}
+        zone:
+          type: string
+          minLength: 1
+          maxLength: 100
+        lat:
+          type: number
+          format: double
+          nullable: true
+        lng:
+          type: number
+          format: double
+          nullable: true
+    PatchedMessageRequest:
+      type: object
+      properties:
+        listing:
+          type: string
+          format: uuid
+        recipient:
+          type: integer
+        body:
+          type: string
+          minLength: 1
+        reply_to:
+          type: string
+          format: uuid
+          nullable: true
+        image_url:
+          type: string
+          nullable: true
+          maxLength: 1000
+        attachment:
+          type: string
+          format: binary
+          nullable: true
+        attachment_name:
+          type: string
+          nullable: true
+          maxLength: 255
+        attachment_mime:
+          type: string
+          nullable: true
+          maxLength: 100
+    PatchedProfileRequest:
+      type: object
+      properties:
+        business_name:
+          type: string
+          maxLength: 255
+        phone:
+          type: string
+          nullable: true
+          maxLength: 50
+        cluster:
+          type: string
+          minLength: 1
+          maxLength: 100
+        zone:
+          type: string
+          nullable: true
+          maxLength: 100
+        sells:
+          type: boolean
+        buys:
+          type: boolean
+        carbon_impact:
+          type: boolean
+        research_consent:
+          type: boolean
+        avatar:
+          type: string
+          format: binary
+          nullable: true
+        avatar_url:
+          nullable: true
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 1000
+          - type: string
+            maxLength: 0
+        lat:
+          type: number
+          format: double
+          nullable: true
+        lng:
+          type: number
+          format: double
+          nullable: true
+    PatchedTransactionRequest:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/TransactionStatusEnum'
+        payment_ref:
+          type: string
+          nullable: true
+          maxLength: 255
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+    PaystackInitializeRequest:
+      type: object
+      properties:
+        listingId:
+          type: string
+          format: uuid
+          description: ID of the listing being purchased
+      required:
+      - listingId
+    PaystackVerifyRequest:
+      type: object
+      properties:
+        reference:
+          type: string
+          minLength: 1
+          description: Paystack transaction reference
+        listingId:
+          type: string
+          format: uuid
+          description: ID of the purchased listing
+      required:
+      - listingId
+      - reference
+    Profile:
+      type: object
+      properties:
+        business_name:
+          type: string
+          maxLength: 255
+        phone:
+          type: string
+          nullable: true
+          maxLength: 50
+        cluster:
+          type: string
+          maxLength: 100
+        zone:
+          type: string
+          nullable: true
+          maxLength: 100
+        sells:
+          type: boolean
+        buys:
+          type: boolean
+        carbon_impact:
+          type: boolean
+        research_consent:
+          type: boolean
+        verified:
+          type: boolean
+          readOnly: true
+        avatar:
+          type: string
+          format: uri
+          nullable: true
+        avatar_url:
+          nullable: true
+          oneOf:
+          - type: string
+            format: uri
+            maxLength: 1000
+          - type: string
+            maxLength: 0
+        display_avatar_url:
+          type: string
+          nullable: true
+          readOnly: true
+        lat:
+          type: number
+          format: double
+          nullable: true
+        lng:
+          type: number
+          format: double
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - display_avatar_url
+      - updated_at
+      - verified
+    SignupRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          minLength: 1
+        password:
+          type: string
+          writeOnly: true
+          minLength: 8
+        business_name:
+          type: string
+          default: ''
+        cluster:
+          type: string
+          minLength: 1
+          default: Ogba
+        phone:
+          type: string
+          default: ''
+        sells:
+          type: boolean
+          default: false
+        buys:
+          type: boolean
+          default: false
+        carbon_impact:
+          type: boolean
+          default: false
+        research_consent:
+          type: boolean
+          default: false
+      required:
+      - email
+      - password
+    Status09eEnum:
+      enum:
+      - Draft
+      - Live
+      - Reserved
+      - Sold
+      type: string
+      description: |-
+        * `Draft` - Draft
+        * `Live` - Live
+        * `Reserved` - Reserved
+        * `Sold` - Sold
+    TokenRefresh:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+        refresh:
+          type: string
+      required:
+      - access
+      - refresh
+    TokenRefreshRequest:
+      type: object
+      properties:
+        refresh:
+          type: string
+          minLength: 1
+      required:
+      - refresh
+    Transaction:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        listing_id:
+          type: string
+          readOnly: true
+        listing_title:
+          type: string
+          readOnly: true
+        listing_material:
+          type: string
+          readOnly: true
+        listing_weight:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          readOnly: true
+        listing_price:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          readOnly: true
+        buyer_id:
+          type: integer
+          readOnly: true
+        seller_id:
+          type: integer
+          readOnly: true
+        counterparty_name:
+          type: string
+          readOnly: true
+        counterparty_id:
+          type: string
+          readOnly: true
+        status:
+          $ref: '#/components/schemas/TransactionStatusEnum'
+        payment_ref:
+          type: string
+          nullable: true
+          maxLength: 255
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        co2e_kg:
+          type: integer
+          nullable: true
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - buyer_id
+      - co2e_kg
+      - counterparty_id
+      - counterparty_name
+      - created_at
+      - id
+      - listing_id
+      - listing_material
+      - listing_price
+      - listing_title
+      - listing_weight
+      - seller_id
+      - updated_at
+    TransactionRequest:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/TransactionStatusEnum'
+        payment_ref:
+          type: string
+          nullable: true
+          maxLength: 255
+        paid_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+    TransactionStatusEnum:
+      enum:
+      - Interest
+      - Reserved
+      - Completed
+      - Cancelled
+      type: string
+      description: |-
+        * `Interest` - Interest
+        * `Reserved` - Reserved
+        * `Completed` - Completed
+        * `Cancelled` - Cancelled
+    User:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        email:
+          title: Email address
+          oneOf:
+          - type: string
+            format: email
+            maxLength: 254
+          - type: string
+            maxLength: 0
+        profile:
+          allOf:
+          - $ref: '#/components/schemas/Profile'
+          readOnly: true
+      required:
+      - id
+      - profile
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

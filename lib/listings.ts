@@ -78,12 +78,14 @@ export function mapListingRow(
   viewer = VIEWER_DEFAULT
 ): Listing {
   const cls = classificationOf(row);
-  const distance = Math.round(haversineKm(viewer, coordsFor(row)) * 10) / 10;
+  const coords = coordsFor(row);
+  const distance = Math.round(haversineKm(viewer, coords) * 10) / 10;
   const photoUrls = listingPhotoGallery(row);
   const photoUrl = photoUrls[0] ?? row.photo_url;
 
   return {
     id: row.id,
+    sellerId: row.seller_id,
     title: row.title,
     material: (cls?.final_material ?? row.material) as MaterialCategory,
     weight: Number(row.weight_kg),
@@ -93,6 +95,8 @@ export function mapListingRow(
     verified: Boolean(row.seller?.verified),
     conf: Math.round(Number(cls?.confidence ?? 0.8) * 100),
     zone: row.zone || row.seller?.cluster || "Ogba",
+    lat: coords.lat,
+    lng: coords.lng,
     photo: photoUrl || "photo pending",
     photoUrl,
     photoUrls,

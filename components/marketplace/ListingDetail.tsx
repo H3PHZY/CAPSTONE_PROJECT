@@ -7,6 +7,8 @@ import { useAuth } from "@/lib/auth-context";
 import { co2Of } from "@/lib/carbon";
 import { CATS } from "@/lib/data";
 import { bumpListingViews, fetchListingById } from "@/lib/listings";
+import { PaystackButton } from "@/components/marketplace/PaystackButton";
+import { GoogleMapLocation } from "@/components/marketplace/GoogleMapLocation";
 import type { Listing } from "@/lib/types";
 
 interface ListingDetailProps {
@@ -19,11 +21,13 @@ function priceNum(p: string) {
 
 export function ListingDetail({ id }: ListingDetailProps) {
   const router = useRouter();
-  const { profile } = useAuth();
+  const { user, profile, openAuth } = useAuth();
   const [listing, setListing] = useState<Listing | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activePhoto, setActivePhoto] = useState<string | null>(null);
+  // Tracks local sold state so UI updates instantly after purchase
+  const [soldLocally, setSoldLocally] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -140,8 +144,24 @@ export function ListingDetail({ id }: ListingDetailProps) {
     : undefined;
 
   function contact() {
+    if (!user) {
+      openAuth("login", `/marketplace/${id}`);
+      return;
+    }
     router.push(`/messages?listing=${id}`);
   }
+
+  const isOwnListing = Boolean(
+    user && listing && (user.id === listing.sellerId || user.id === listing.seller)
+  );
+  // listing.seller holds the business name — we need seller_id from raw data;
+  // we do a cheaper check: if the user is the verified owner they can manage it.
+  const rawStatus = soldLocally ? "Sold" : listing?.status;
+  const isLive = rawStatus === "Live";
+  const isSold = rawStatus === "Sold";
+  const isReserved = rawStatus === "Reserved";
+  const canPurchase = isLive && Boolean(user) && !isOwnListing;
+  const rawPriceNgn = priceNum(listing?.price ?? "0");
 
   return (
     <div className="page-shell page-shell--detail">
@@ -228,7 +248,18 @@ export function ListingDetail({ id }: ListingDetailProps) {
         <aside className="detail-aside">
           <div className="panel panel--pad">
             <div className="live-badge">
-              {listing.material} · {listing.status ?? "LIVE"}
+              {listing.material} ·{" "}
+              <span
+                style={{
+                  color: isSold
+                    ? "oklch(0.62 0.14 155)"
+                    : isReserved
+                      ? "oklch(0.72 0.12 85)"
+                      : undefined,
+                }}
+              >
+                {rawStatus ?? "LIVE"}
+              </span>
             </div>
             <h1 className="detail-title">{listing.title}</h1>
             <div className="detail-price-row">
@@ -237,13 +268,62 @@ export function ListingDetail({ id }: ListingDetailProps) {
                 for {listing.weight} kg · ₦{perKg}/kg
               </div>
             </div>
+
+            {/* ── Action panel ── */}
             <div className="detail-actions">
-              <button type="button" className="btn btn-primary btn-lg btn-block" onClick={contact}>
-                Initiate contact
-              </button>
-              <button type="button" className="btn btn-outline btn-block">
-                Request pickup quote
-              </button>
+              {isSold ? (
+                <div className="paystack-success">
+                  <div className="paystack-success-icon">✓</div>
+                  <div className="paystack-success-title">This lot has been sold</div>
+                  <p className="paystack-success-copy">
+                    Check the marketplace for similar available materials.
+                  </p>
+                </div>
+              ) : isReserved ? (
+                <>
+                  <div className="upload-error" style={{ textAlign: "center" }}>
+                    Reserved — deal in progress
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-block"
+                    onClick={contact}
+                  >
+                    Message seller
+                  </button>
+                </>
+              ) : user ? (
+                <>
+                  {/* Purchase button — hidden for own listings */}
+                  {!isOwnListing && rawPriceNgn > 0 ? (
+                    <PaystackButton
+                      buyerEmail={user.email ?? ""}
+                      buyerId={user.id}
+                      listingId={listing.id}
+                      priceFormatted={listing.price}
+                      priceNgn={rawPriceNgn}
+                      listingTitle={listing.title}
+                      onPurchaseComplete={() => setSoldLocally(true)}
+                    />
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-block"
+                    onClick={contact}
+                  >
+                    Initiate contact
+                  </button>
+                </>
+              ) : (
+                /* Not logged in */
+                <button
+                  type="button"
+                  className="btn btn-primary btn-lg btn-block"
+                  onClick={() => openAuth("login", `/marketplace/${id}`)}
+                >
+                  Log in to purchase
+                </button>
+              )}
             </div>
             <div className="detail-reply-note">
               Contact opens Messages with this seller · exact address shared after you accept
@@ -264,12 +344,12 @@ export function ListingDetail({ id }: ListingDetailProps) {
 
           <div className="panel panel--pad">
             <div className="panel-label">PICKUP LOCATION</div>
-            <div className="map-placeholder">
-              <span>
-                map: {listing.distance} km · {listing.zone}
-              </span>
-              <div className="map-pin" />
-            </div>
+            <GoogleMapLocation
+              lat={listing.lat}
+              lng={listing.lng}
+              zone={listing.zone}
+              distance={listing.distance}
+            />
             <div className="map-meta">
               <div>{listing.zone}, Lagos State</div>
               <div className="map-meta-sub">

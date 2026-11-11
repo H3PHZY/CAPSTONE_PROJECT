@@ -22,6 +22,7 @@ export type RadiusOption =
 
 export interface Listing {
   id: string;
+  sellerId?: string;
   title: string;
   material: MaterialCategory;
   weight: number;
@@ -31,6 +32,8 @@ export interface Listing {
   verified: boolean;
   conf: number;
   zone: string;
+  lat?: number;
+  lng?: number;
   /** Label or remote photo URL */
   photo: string;
   photoUrl?: string | null;

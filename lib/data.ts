@@ -34,7 +34,11 @@ export const RADII: Record<RadiusOption, number> = {
 export const FAQS: Faq[] = [
   {
     q: "Is it free to list?",
-    a: "Yes. Listing, classification and messaging are free for the full six-week pilot, with no commission. Once a deal is reserved and priced, buyers pay securely through Paystack; EcoLoop confirms payment automatically before the exchange can be completed.",
+    a: "Yes. Listing, AI classification and SME messaging are 100% free for the full six-week pilot. There is zero platform commission. When deals are agreed, payments are securely processed and verified end-to-end via our integrated payment gateway.",
+  },
+  {
+    q: "How are payments handled?",
+    a: "All transactions are processed securely through our integrated Paystack gateway. When a buyer purchases a lot, payments are verified in real time, locking the material and recording the transaction automatically without needing to manually share bank details.",
   },
   {
     q: "How accurate is the AI classification?",
@@ -167,7 +171,7 @@ export const THREADS: Thread[] = [
     name: "Loop Recyclers",
     subject: "ECL-0141 · Aluminium offcuts",
     time: "12:12",
-    preview: "Agreed. I will pay through the Paystack checkout…",
+    preview: "Agreed. Sending the transfer reference now…",
   },
   {
     name: "Alafia Packaging",
@@ -207,12 +211,12 @@ export const INITIAL_MSGS: ChatMessage[] = [
   },
   {
     me: true,
-    text: "That works. Gate opens 8am, ask for Tunde at the loading bay. Payment is handled securely through Paystack once we reserve the deal.",
+    text: "That works. Gate opens 8am, ask for Tunde at the loading bay. Payment on collection by transfer.",
     time: "12:11",
   },
   {
     me: false,
-    text: "Agreed. Please reserve the listing for us and I will pay through the Paystack checkout.",
+    text: "Agreed. Sending the transfer reference now — please mark the listing as reserved for us.",
     time: "12:12",
   },
 ];
@@ -266,8 +270,8 @@ export const TXNS: Txn[] = [
 export const QUICK_REPLIES = [
   "Still available",
   "Send pickup address",
-  "Pickup time confirmed",
-  "I will pay through Paystack",
+  "Here are my transfer details",
+  "Payment proof attached",
 ] as const;
 
 export const PICKUP_LOCATIONS = [
