@@ -41,6 +41,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
 
     # Third-party packages
+    'cloudinary_storage',
+    'cloudinary',
     'rest_framework',
     'rest_framework_simplejwt',
     'corsheaders',
@@ -165,11 +167,18 @@ if not DEBUG and not HAS_CLOUDINARY:
 STORAGES = {
     'default': {
         'BACKEND': (
-            'storages.backends.cloudinary.CloudinaryStorage'
+            'cloudinary_storage.storage.MediaCloudinaryStorage'
             if HAS_CLOUDINARY
             else 'django.core.files.storage.FileSystemStorage'
         ),
-        'OPTIONS': {'resource_type': 'auto'} if HAS_CLOUDINARY else {},
+        'OPTIONS': {},
+    },
+    'raw_media': {
+        'BACKEND': (
+            'cloudinary_storage.storage.RawMediaCloudinaryStorage'
+            if HAS_CLOUDINARY
+            else 'django.core.files.storage.FileSystemStorage'
+        ),
     },
     'staticfiles': {
         'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',

@@ -12,7 +12,7 @@ This Django REST API powers the **EcoLoop** industrial waste redistribution mark
 | Authorization | Django REST Framework permissions | [`api/permissions.py`](api/permissions.py) |
 | Business events | Django model signals | [`api/signals.py`](api/signals.py) |
 | API endpoints | Authentication, listings, transactions, messages, media, classification, and payments | [`api/views.py`](api/views.py) |
-| Media storage | Django storage backend; Cloudinary in production | [`ecoloop/settings.py`](ecoloop/settings.py) |
+| Media storage | `django-cloudinary-storage`; image and raw-file Cloudinary backends in production | [`ecoloop/settings.py`](ecoloop/settings.py) |
 
 ---
 

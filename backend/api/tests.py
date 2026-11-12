@@ -1,8 +1,9 @@
 from decimal import Decimal
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from rest_framework import status
+from unittest.mock import Mock, patch
 from api.models import (
     Listing,
     Classification,
@@ -14,6 +15,7 @@ from api.models import (
     TransactionStatus,
 )
 from api.utils import haversine_km, calculate_co2_kg, is_pilot_verified
+from api.paystack import AmountMismatchError, PaymentVerificationError, verify_paystack_transaction
 
 User = get_user_model()
 
@@ -161,6 +163,137 @@ class EcoLoopAPITestCase(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_paystack_initialization_persists_reference_and_reserves_listing(self):
+        listing = Listing.objects.create(
+            seller=self.seller,
+            title="Payment test material",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            price_ngn=Decimal("25000.00"),
+            status=ListingStatus.LIVE,
+        )
+        self.client.force_authenticate(user=self.buyer)
+
+        response = self.client.post(
+            "/api/pay/initialize/",
+            {"listingId": str(listing.id)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        transaction = Transaction.objects.get(
+            listing=listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+        self.assertEqual(transaction.status, TransactionStatus.RESERVED)
+        self.assertEqual(transaction.payment_ref, response.data["reference"])
+        self.assertEqual(response.data["amountKobo"], 2_500_000)
+        listing.refresh_from_db()
+        self.assertEqual(listing.status, ListingStatus.RESERVED)
+
+    @override_settings(PAYSTACK_SECRET_KEY="sk_test_payment")
+    def test_paystack_verification_completes_only_initialized_payment_once(self):
+        listing = Listing.objects.create(
+            seller=self.seller,
+            title="Payment test material",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            price_ngn=Decimal("25000.00"),
+            status=ListingStatus.LIVE,
+        )
+        self.client.force_authenticate(user=self.buyer)
+        initialized = self.client.post(
+            "/api/pay/initialize/",
+            {"listingId": str(listing.id)},
+            format="json",
+        )
+        reference = initialized.data["reference"]
+        paystack_response = Mock(ok=True)
+        paystack_response.json.return_value = {
+            "status": True,
+            "data": {
+                "status": "success",
+                "amount": 2_500_000,
+                "currency": "NGN",
+                "reference": reference,
+            },
+        }
+
+        with patch("api.paystack.requests.get", return_value=paystack_response) as verify:
+            response = self.client.post(
+                "/api/pay/verify/",
+                {"listingId": str(listing.id), "reference": reference},
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        transaction = Transaction.objects.get(payment_ref=reference)
+        self.assertEqual(transaction.status, TransactionStatus.COMPLETED)
+        self.assertIsNotNone(transaction.paid_at)
+        self.assertTrue(CarbonRecord.objects.filter(transaction=transaction).exists())
+        listing.refresh_from_db()
+        self.assertEqual(listing.status, ListingStatus.SOLD)
+
+        replay = self.client.post(
+            "/api/pay/verify/",
+            {"listingId": str(listing.id), "reference": reference},
+            format="json",
+        )
+        self.assertEqual(replay.status_code, status.HTTP_409_CONFLICT)
+        verify.assert_called_once()
+
+    @override_settings(PAYSTACK_SECRET_KEY="sk_test_payment")
+    def test_paystack_verification_rejects_uninitialized_reference(self):
+        listing = Listing.objects.create(
+            seller=self.seller,
+            title="Payment test material",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            price_ngn=Decimal("25000.00"),
+            status=ListingStatus.LIVE,
+        )
+        self.client.force_authenticate(user=self.buyer)
+        with patch("api.paystack.requests.get") as verify:
+            response = self.client.post(
+                "/api/pay/verify/",
+                {
+                    "listingId": str(listing.id),
+                    "reference": "ECO-UNISSUED-REFERENCE",
+                },
+                format="json",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        verify.assert_not_called()
+
+    @override_settings(PAYSTACK_SECRET_KEY="sk_test_payment")
+    def test_paystack_verification_requires_exact_ngn_amount_and_matching_reference(self):
+        cases = [
+            (2_499_999, "NGN", "ECO-TEST", AmountMismatchError),
+            (2_500_001, "NGN", "ECO-TEST", AmountMismatchError),
+            (2_500_000, "USD", "ECO-TEST", PaymentVerificationError),
+            (2_500_000, "NGN", "ECO-OTHER", PaymentVerificationError),
+        ]
+        for amount, currency, returned_reference, error_type in cases:
+            with self.subTest(amount=amount, currency=currency, reference=returned_reference):
+                paystack_response = Mock(ok=True)
+                paystack_response.json.return_value = {
+                    "status": True,
+                    "data": {
+                        "status": "success",
+                        "amount": amount,
+                        "currency": currency,
+                        "reference": returned_reference,
+                    },
+                }
+                with patch("api.paystack.requests.get", return_value=paystack_response):
+                    with self.assertRaises(error_type):
+                        verify_paystack_transaction(
+                            "ECO-TEST",
+                            Decimal("25000.00"),
+                        )
 
     def test_haversine_distance_calculation(self):
         """Test accurate Haversine distance between Ogba and Ikeja clusters."""

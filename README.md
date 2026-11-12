@@ -46,13 +46,14 @@ Set `NEXT_PUBLIC_DJANGO_API_URL=http://127.0.0.1:8000/api` in `.env.local`. Goog
 
 The root `render.yaml` defines the Django web service, PostgreSQL database, static collection, migration release command, and Gunicorn start command.
 
-1. Connect the repository to Render and deploy the Blueprint.
-2. Set `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, and `FRONTEND_URL` to the exact HTTPS Vercel origin (for example `https://your-app.vercel.app`).
-3. Configure `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`.
-4. Configure Hugging Face, Paystack, and production SMTP values in the Render environment. Never put private credentials in `NEXT_PUBLIC_*` variables.
-5. Confirm the API responds at `/api/docs/` and that the Render release completed migrations.
+1. Connect the repository to Render and deploy the Blueprint. It creates a **Free** web service only; it does not provision a database.
+2. Set `DATABASE_URL` to the Internal URL of the PostgreSQL database you intend to use. The blueprint prompts for this value; it will not create or replace a database.
+3. Set `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, and `FRONTEND_URL` to the exact HTTPS Vercel origin (for example `https://your-app.vercel.app`).
+4. Configure `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET`.
+5. Configure Hugging Face, Paystack, and production SMTP values in the Render environment. Never put private credentials in `NEXT_PUBLIC_*` variables.
+6. Confirm the API responds at `/api/docs/` and that the Render release completed migrations.
 
-Production mode requires a non-development Django secret and Cloudinary credentials. Render serves collected static assets with WhiteNoise; uploaded media is stored in Cloudinary rather than the ephemeral web-service filesystem.
+Production mode requires a non-development Django secret and Cloudinary credentials. Render serves collected static assets with WhiteNoise; uploaded images and raw attachments use Cloudinary media storage. The Free web service can sleep while idle; allow time for it to wake before testing or a demo.
 
 ### Next.js on Vercel
 
@@ -95,7 +96,7 @@ app/                    Next.js routes and geocoding proxy
 backend/                Django project, API, PostgreSQL models, migrations
 components/             Frontend UI
 lib/                    Django API clients, auth, and domain mappers
-render.yaml             Render backend/database Blueprint
+render.yaml             Render Free web-service Blueprint (uses an existing database)
 public/assets/          Static assets
 docs/                   Screenshots and designs
 ```

@@ -1,7 +1,6 @@
 from decimal import Decimal
 from pathlib import PurePath
 import secrets
-import time
 import uuid
 import requests
 from PIL import Image, UnidentifiedImageError
@@ -13,7 +12,7 @@ from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
 from django.db import transaction as db_transaction
 from django.db.models import Q, Sum, Count, Case, When, IntegerField
-from django.core.files.storage import default_storage
+from django.core.files.storage import default_storage, storages
 from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
@@ -714,18 +713,19 @@ class MediaUploadView(views.APIView):
                 )
 
         path = f'{category}/{request.user.id}/{uuid.uuid4().hex}.{extension}'
-        stored_path = default_storage.save(path, uploaded)
-        url = request.build_absolute_uri(default_storage.url(stored_path))
+        storage = (
+            storages['raw_media']
+            if category == 'message-attachment' and extension not in self.IMAGE_TYPES
+            else default_storage
+        )
+        stored_path = storage.save(path, uploaded)
+        url = request.build_absolute_uri(storage.url(stored_path))
         return Response({'path': stored_path, 'url': url}, status=status.HTTP_201_CREATED)
 
 # ─── 7. Paystack Payment Views ────────────────────────────────────────────────
 
 class PaystackInitializeView(views.APIView):
-    """
-    Supervisor Feedback #1: Server-Side Reference Generation.
-    Validates listing availability, generates a structured cryptographic transaction reference,
-    and returns verified price/kobo details before opening Paystack modal.
-    """
+    """Reserve an available listing and persist its server-generated payment reference."""
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
@@ -735,9 +735,9 @@ class PaystackInitializeView(views.APIView):
         description="Generates server-side secure reference (ECO-...) and returns authorized amount for checkout."
     )
     def post(self, request):
-        listing_id = request.data.get('listingId') or request.data.get('listing_id')
-        if not listing_id:
-            return Response({'error': 'listingId is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = PaystackInitializeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        listing_id = serializer.validated_data['listingId']
 
         with db_transaction.atomic():
             listing = Listing.objects.select_for_update().filter(id=listing_id).first()
@@ -750,9 +750,9 @@ class PaystackInitializeView(views.APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            if listing.status == ListingStatus.SOLD:
+            if listing.status not in (ListingStatus.LIVE, ListingStatus.RESERVED):
                 return Response(
-                    {'error': 'This listing has already been sold.'},
+                    {'error': 'This listing is not available for purchase.'},
                     status=status.HTTP_409_CONFLICT
                 )
 
@@ -774,15 +774,42 @@ class PaystackInitializeView(views.APIView):
                     status=status.HTTP_409_CONFLICT
                 )
 
-            # Generate structured server-side reference: ECO-<listing_short>-<buyer_short>-<timestamp>-<nonce>
-            listing_short = str(listing.id).replace('-', '')[:6].upper()
-            buyer_short = str(request.user.id).replace('-', '')[:6].upper()
-            timestamp = int(time.time())
-            nonce = secrets.token_hex(3).upper()
-            reference = f"ECO-{listing_short}-{buyer_short}-{timestamp}-{nonce}"
+            reference = f"ECO-{uuid.uuid4().hex.upper()}-{secrets.token_hex(16).upper()}"
+            txn = DealTransaction.objects.select_for_update().filter(
+                listing=listing,
+                buyer=request.user,
+                seller=listing.seller,
+            ).first()
+            if txn and txn.status == TransactionStatus.COMPLETED:
+                return Response(
+                    {'error': 'This purchase has already been completed.'},
+                    status=status.HTTP_409_CONFLICT
+                )
+            if txn:
+                txn.status = TransactionStatus.RESERVED
+                txn.payment_ref = reference
+                txn.paid_at = None
+                txn.completed_at = None
+                txn.save(
+                    update_fields=[
+                        'status',
+                        'payment_ref',
+                        'paid_at',
+                        'completed_at',
+                        'updated_at',
+                    ]
+                )
+            else:
+                DealTransaction.objects.create(
+                    listing=listing,
+                    buyer=request.user,
+                    seller=listing.seller,
+                    status=TransactionStatus.RESERVED,
+                    payment_ref=reference,
+                )
 
             amount_ngn = float(listing.price_ngn)
-            amount_kobo = int(round(listing.price_ngn * 100))
+            amount_kobo = int(listing.price_ngn * 100)
 
             return Response({
                 'ok': True,
@@ -796,12 +823,7 @@ class PaystackInitializeView(views.APIView):
 
 
 class PaystackVerifyView(views.APIView):
-    """
-    Supervisor Feedback #2 & #3:
-    - Atomically locks listing with select_for_update() to prevent double-spending / race conditions.
-    - Strictly verifies amount against database ground truth (listing.price_ngn * 100).
-    - Confirms Paystack reference and marks listing Sold atomically.
-    """
+    """Verify a bound, unused Paystack payment before completing the reserved deal."""
     permission_classes = [IsAuthenticated]
 
     @extend_schema(
@@ -811,11 +833,10 @@ class PaystackVerifyView(views.APIView):
         description="Verifies payment with Paystack, asserts amount matches database price, and updates listing to Sold atomically."
     )
     def post(self, request):
-        ref = request.data.get('reference')
-        listing_id = request.data.get('listingId') or request.data.get('listing_id')
-
-        if not ref or not listing_id:
-            return Response({'error': 'reference and listingId are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = PaystackVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ref = serializer.validated_data['reference']
+        listing_id = serializer.validated_data['listingId']
 
         now = timezone.now()
         with db_transaction.atomic():
@@ -830,6 +851,27 @@ class PaystackVerifyView(views.APIView):
             if listing.seller == request.user:
                 return Response({'error': 'You cannot purchase your own listing.'}, status=status.HTTP_400_BAD_REQUEST)
 
+            txn = DealTransaction.objects.select_for_update().filter(
+                listing=listing,
+                buyer=request.user,
+                seller=listing.seller,
+            ).first()
+            if not txn or txn.status != TransactionStatus.RESERVED:
+                return Response(
+                    {'error': 'Initialize this purchase before verifying payment.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if txn.payment_ref != ref:
+                return Response(
+                    {'error': 'Payment reference does not match this purchase.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            if DealTransaction.objects.filter(payment_ref=ref).exclude(pk=txn.pk).exists():
+                return Response(
+                    {'error': 'This payment reference was already used.'},
+                    status=status.HTTP_409_CONFLICT
+                )
+
             # Ground truth price from DB (prevents client price tampering)
             expected_price_ngn = listing.price_ngn
             if not expected_price_ngn or expected_price_ngn <= 0:
@@ -838,20 +880,10 @@ class PaystackVerifyView(views.APIView):
             # Verify with Paystack using database price as ground truth
             verify_paystack_transaction(ref, expected_price_ngn)
 
-            txn, _ = DealTransaction.objects.select_for_update().get_or_create(
-                listing=listing,
-                buyer=request.user,
-                seller=listing.seller,
-                defaults={'status': TransactionStatus.COMPLETED, 'completed_at': now}
-            )
             txn.status = TransactionStatus.COMPLETED
-            txn.payment_ref = ref
             txn.paid_at = now
             txn.completed_at = now
             txn.save()
-
-            listing.status = ListingStatus.SOLD
-            listing.save(update_fields=['status', 'updated_at'])
 
         return Response({
             'ok': True,
