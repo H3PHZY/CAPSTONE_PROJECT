@@ -3,9 +3,7 @@ from api.models import ListingStatus
 
 class IsProfileOwnerOrReadOnly(permissions.BasePermission):
     """
-    Translates Supabase profile policies:
-    - Profiles are publicly readable.
-    - Only the user can update their own profile.
+    Profiles are publicly readable; only the owner may update them.
     """
     def has_object_permission(self, request, view, obj):
         if request.method in permissions.SAFE_METHODS:
@@ -14,17 +12,19 @@ class IsProfileOwnerOrReadOnly(permissions.BasePermission):
 
 class IsListingOwnerOrPublicReadOnly(permissions.BasePermission):
     """
-    Translates Supabase listings policies:
-    - Live listings are publicly readable by anyone (guests & authenticated).
-    - Sellers can view their own draft/reserved/sold listings.
-    - Only the listing owner can update or delete.
+    Live listings are public; sellers can view their own private listings.
+    Only the owner may update an open draft or live listing.
     """
     def has_object_permission(self, request, view, obj):
         if request.method in permissions.SAFE_METHODS:
             if obj.status == ListingStatus.LIVE:
                 return True
             return request.user.is_authenticated and obj.seller == request.user
-        return request.user.is_authenticated and obj.seller == request.user
+        return (
+            request.user.is_authenticated
+            and obj.seller == request.user
+            and obj.status in (ListingStatus.DRAFT, ListingStatus.LIVE)
+        )
 
 class CanDeleteListing(permissions.BasePermission):
     """
@@ -41,8 +41,7 @@ class CanDeleteListing(permissions.BasePermission):
 
 class IsTransactionParty(permissions.BasePermission):
     """
-    Translates Supabase transactions policies:
-    - Only the buyer or the seller involved in the transaction can view or update it.
+    Only the buyer or seller involved in a transaction may access it.
     """
     def has_object_permission(self, request, view, obj):
         if not request.user.is_authenticated:
@@ -51,11 +50,9 @@ class IsTransactionParty(permissions.BasePermission):
 
 class IsMessageParticipant(permissions.BasePermission):
     """
-    Translates Supabase messages policies:
-    - Only sender or recipient can read or participate in messages.
+    Only a message's sender or recipient may access it.
     """
     def has_object_permission(self, request, view, obj):
         if not request.user.is_authenticated:
             return False
         return request.user == obj.sender or request.user == obj.recipient
-

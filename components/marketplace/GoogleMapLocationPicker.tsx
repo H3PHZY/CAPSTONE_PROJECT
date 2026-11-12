@@ -49,7 +49,8 @@ export function GoogleMapLocationPicker({
       const params = new URLSearchParams({ address: value.address.trim() });
       await geocode(params);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not find address.");
+      const message = reason instanceof Error ? reason.message : "Could not find address.";
+      setError(`${message} You can still publish using the selected pickup zone.`);
     } finally {
       setBusy(false);
     }
@@ -80,7 +81,9 @@ export function GoogleMapLocationPicker({
           });
           await geocode(params);
         } catch (reason) {
-          setError(reason instanceof Error ? reason.message : "Could not resolve your location.");
+          const message =
+            reason instanceof Error ? reason.message : "Could not resolve your location.";
+          setError(`${message} You can still publish using the selected pickup zone.`);
         } finally {
           setBusy(false);
         }
@@ -134,7 +137,10 @@ export function GoogleMapLocationPicker({
       </div>
       {busy ? <div className="field-foot">Resolving location…</div> : null}
       {!busy && value.address.trim() && (value.lat == null || value.lng == null) ? (
-        <div className="field-foot">Find the address on the map to verify its coordinates.</div>
+        <div className="field-foot">
+          Verified coordinates improve distance estimates; if unavailable, the selected pickup
+          zone is used for publishing.
+        </div>
       ) : null}
       {error ? (
         <div className="field-foot" role="alert" style={{ color: "oklch(0.52 0.13 30)" }}>

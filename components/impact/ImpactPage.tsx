@@ -11,32 +11,39 @@ const PILOT_GOAL_TONNES = 25;
 
 export function ImpactPage() {
   const { user, ready } = useAuth();
-  const [data, setData] = useState<CarbonImpactSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{
+    userId: string;
+    data: CarbonImpactSummary | null;
+    error: string | null;
+  } | null>(null);
+  const userId = ready ? user?.id : undefined;
+  const currentResult = userId && result?.userId === userId ? result : null;
+  const data = currentResult?.data ?? null;
+  const error = currentResult?.error ?? null;
+  const loading = Boolean(userId && !currentResult);
 
   useEffect(() => {
-    if (!ready || !user) return;
+    if (!userId) return;
     let alive = true;
-    setLoading(true);
-    void fetchCarbonImpact(user.id)
+    void fetchCarbonImpact()
       .then((summary) => {
         if (!alive) return;
-        setData(summary);
+        setResult({ userId, data: summary, error: null });
       })
       .catch((err) => {
         if (!alive) return;
-        setError(err instanceof Error ? err.message : "Could not load impact");
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
+        setResult({
+          userId,
+          data: null,
+          error: err instanceof Error ? err.message : "Could not load impact",
+        });
       });
     return () => {
       alive = false;
     };
-  }, [ready, user]);
+  }, [userId]);
 
-  if (loading) {
+  if (!ready || loading) {
     return (
       <div className="page-shell page-shell--wide">
         <div className="page-sub">Loading your carbon impact…</div>

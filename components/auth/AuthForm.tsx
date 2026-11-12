@@ -4,6 +4,16 @@ import { useState } from "react";
 import { Select } from "@/components/ui/Select";
 import type { AuthMode, SignupProfile } from "@/lib/auth-context";
 
+function latestAdultDateOfBirth() {
+  const date = new Date();
+  date.setFullYear(date.getFullYear() - 18);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
 export function AuthForm({
   mode,
   onModeChange,
@@ -18,6 +28,7 @@ export function AuthForm({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [business, setBusiness] = useState("");
+  const [dateOfBirth, setDateOfBirth] = useState("");
   const [cluster, setCluster] = useState("Ogba");
   const [phone, setPhone] = useState("");
   const [consent, setConsent] = useState(false);
@@ -50,6 +61,7 @@ export function AuthForm({
         isSignup
           ? {
               businessName: business,
+              dateOfBirth,
               cluster,
               phone,
               sells,
@@ -155,6 +167,22 @@ export function AuthForm({
                   className="input"
                   required
                 />
+              </div>
+              <div>
+                <label className="field-label" htmlFor="signup-date-of-birth">
+                  Date of birth
+                </label>
+                <input
+                  id="signup-date-of-birth"
+                  type="date"
+                  value={dateOfBirth}
+                  onChange={(e) => setDateOfBirth(e.target.value)}
+                  max={latestAdultDateOfBirth()}
+                  className="input"
+                  autoComplete="bday"
+                  required
+                />
+                <div className="field-foot">You must be at least 18 years old to sign up.</div>
               </div>
             </>
           ) : null}

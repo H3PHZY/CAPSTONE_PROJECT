@@ -204,6 +204,12 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_THROTTLE_RATES': {
+        'login': '5/minute',
+        'signup': '5/hour',
+        'password_reset': '3/hour',
+        'pay': '10/minute',
+    },
 }
 
 # Spectacular OpenAPI Documentation Settings
@@ -213,11 +219,17 @@ SPECTACULAR_SETTINGS = {
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
     'COMPONENT_SPLIT_REQUEST': True,
+    'ENUM_NAME_OVERRIDES': {
+        'MaterialCategoryEnum': 'api.models.MaterialCategory',
+        'ListingStatusEnum': 'api.models.ListingStatus',
+        'TransactionStatusEnum': 'api.models.TransactionStatus',
+        'DisputeStatusEnum': 'api.models.DisputeStatus',
+    },
 }
 
 # SimpleJWT configuration
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': False,
@@ -227,6 +239,7 @@ SIMPLE_JWT = {
 }
 
 # CORS settings for Next.js frontend
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000').rstrip('/')
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.environ.get(
@@ -242,13 +255,25 @@ CSRF_TRUSTED_ORIGINS = [
     if origin.strip()
 ]
 
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 if not DEBUG:
+    if not FRONTEND_URL.startswith('https://'):
+        raise ImproperlyConfigured('FRONTEND_URL must use HTTPS in production.')
+    if CORS_ALLOWED_ORIGINS != [FRONTEND_URL]:
+        raise ImproperlyConfigured(
+            'Production CORS_ALLOWED_ORIGINS must contain only FRONTEND_URL.'
+        )
+    if CSRF_TRUSTED_ORIGINS != [FRONTEND_URL]:
+        raise ImproperlyConfigured(
+            'Production CSRF_TRUSTED_ORIGINS must contain only FRONTEND_URL.'
+        )
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
     SECURE_SSL_REDIRECT = os.environ.get('SECURE_SSL_REDIRECT', 'True').lower() in ('true', '1', 'yes')
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', '31536000'))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
-FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@ecoloop.ng')
 EMAIL_BACKEND = os.environ.get(
     'EMAIL_BACKEND',
@@ -262,6 +287,9 @@ EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True').lower() in ('true', '1', 'yes')
 
 # External services
+PAYMENT_HOLD_MINUTES = int(os.environ.get('PAYMENT_HOLD_MINUTES', '30'))
+if PAYMENT_HOLD_MINUTES <= 0:
+    raise ImproperlyConfigured('PAYMENT_HOLD_MINUTES must be a positive integer.')
 HF_TOKEN = os.environ.get('HF_TOKEN', '')
 HF_MODEL_ID = os.environ.get('HF_MODEL_ID', 'yangy50/garbage-classification')
 HF_VIT_MODEL = os.environ.get('HF_VIT_MODEL', 'google/vit-base-patch16-224')

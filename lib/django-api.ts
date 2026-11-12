@@ -3,7 +3,7 @@ import type {
   ListingStatus,
   MaterialCategory,
   TransactionStatus,
-} from "@/lib/database.types";
+} from "@/lib/models";
 
 export type DjangoListing = {
   id: string;
@@ -44,7 +44,8 @@ export type DjangoTransaction = {
   listing_title: string;
   listing_material: MaterialCategory;
   listing_weight: string | number;
-  listing_price: string | number | null;
+  amount_ngn: string | number | null;
+  currency: string;
   buyer_id: string;
   seller_id: string;
   counterparty_name: string;
@@ -55,6 +56,17 @@ export type DjangoTransaction = {
   completed_at: string | null;
   co2e_kg: string | number | null;
   created_at: string;
+};
+
+export type DjangoDispute = {
+  id: string;
+  transaction_id: string;
+  raised_by_id: string;
+  reason: string;
+  status: "Open" | "Resolved" | "Refunded";
+  resolution_note: string;
+  created_at: string;
+  updated_at: string;
 };
 
 export type DjangoMessage = {
@@ -206,6 +218,13 @@ export const djangoListings = {
       method: "DELETE",
     });
   },
+
+  publish(id: string) {
+    return djangoRequest<DjangoListing>(
+      `/listings/${encodeURIComponent(id)}/publish/`,
+      { method: "POST" }
+    );
+  },
 };
 
 export const djangoTransactions = {
@@ -243,6 +262,19 @@ export const djangoTransactions = {
         date: string;
       }[];
     }>("/impact/");
+  },
+};
+
+export const djangoDisputes = {
+  fetchMine() {
+    return djangoList<DjangoDispute>("/disputes/");
+  },
+
+  create(payload: { transaction_id: string; reason: string }) {
+    return djangoRequest<DjangoDispute>("/disputes/", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 };
 

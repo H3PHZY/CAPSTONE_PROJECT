@@ -1,6 +1,5 @@
-import type { MaterialCategory, TransactionStatus } from "@/lib/database.types";
+import type { MaterialCategory, TransactionStatus } from "@/lib/models";
 import { djangoTransactions, type DjangoTransaction } from "@/lib/django-api";
-import { formatPriceNgn } from "@/lib/listings";
 import type { Txn } from "@/lib/types";
 
 export type TransactionView = {
@@ -16,15 +15,14 @@ export type TransactionView = {
   listingTitle: string;
   material: MaterialCategory;
   weightKg: number;
-  priceNgn: number | null;
-  listingPriceNgn: number | null;
-  dealPriceNgn: number | null;
+  amountNgn: number | null;
+  currency: string;
   counterpartyName: string;
   co2eKg: number | null;
 };
 
-function mapTxn(row: DjangoTransaction): TransactionView {
-  const listingPrice = row.listing_price == null ? null : Number(row.listing_price);
+export function mapTxn(row: DjangoTransaction): TransactionView {
+  const amountNgn = row.amount_ngn == null ? null : Number(row.amount_ngn);
   return {
     id: row.id,
     listingId: row.listing_id,
@@ -38,9 +36,8 @@ function mapTxn(row: DjangoTransaction): TransactionView {
     listingTitle: row.listing_title || "Listing",
     material: (row.listing_material || "Metal") as MaterialCategory,
     weightKg: Number(row.listing_weight || 0),
-    priceNgn: listingPrice,
-    listingPriceNgn: listingPrice,
-    dealPriceNgn: null,
+    amountNgn,
+    currency: row.currency || "NGN",
     counterpartyName: row.counterparty_name || "EcoLoop user",
     co2eKg: row.co2e_kg == null ? null : Number(row.co2e_kg),
   };
@@ -65,8 +62,7 @@ export async function findTransactionForPair(
 export async function getPairTransactionView(
   listingId: string,
   buyerId: string,
-  sellerId: string,
-  _viewerId: string
+  sellerId: string
 ) {
   const row = await findTransactionForPair(listingId, buyerId, sellerId);
   return row ? mapTxn(row) : null;
@@ -108,7 +104,7 @@ export async function markExchangeCompleted(input: {
     throw new Error("This exchange was cancelled");
   }
 
-  const price = Number(row.listing_price ?? 0);
+  const price = Number(row.amount_ngn ?? 0);
   if (price > 0 && !row.paid_at) {
     throw new Error("Wait for payment to confirm before marking this exchange completed");
   }
@@ -118,7 +114,7 @@ export async function markExchangeCompleted(input: {
   );
 }
 
-export async function fetchMyTransactions(_userId: string) {
+export async function fetchMyTransactions() {
   const rows = await djangoTransactions.fetchMine();
   return rows.map(mapTxn);
 }
@@ -132,9 +128,7 @@ export type CarbonImpactSummary = {
   recent: Txn[];
 };
 
-export async function fetchCarbonImpact(
-  _userId: string
-): Promise<CarbonImpactSummary> {
+export async function fetchCarbonImpact(): Promise<CarbonImpactSummary> {
   return djangoTransactions.fetchCarbonImpact();
 }
 
@@ -142,7 +136,24 @@ export function transactionRef(id: string) {
   return `ECL-${id.replace(/-/g, "").slice(0, 8).toUpperCase()}`;
 }
 
-export async function fetchTransactionById(id: string, _viewerId: string) {
+export function formatTransactionAmount(
+  amount: number | null | undefined,
+  currency: string
+) {
+  if (amount == null || !Number.isFinite(amount)) return "—";
+  try {
+    return new Intl.NumberFormat("en-NG", {
+      style: "currency",
+      currency: currency || "NGN",
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${currency || "NGN"} ${amount.toLocaleString("en-NG")}`;
+  }
+}
+
+export async function fetchTransactionById(id: string) {
   const rows = await djangoTransactions.fetchMine();
   const row = rows.find((transaction) => transaction.id === id);
   return row ? mapTxn(row) : null;

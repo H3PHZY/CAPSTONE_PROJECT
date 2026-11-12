@@ -22,6 +22,8 @@ function priceNum(p: string) {
   return parseFloat(String(p).replace(/,/g, "")) || 0;
 }
 
+const EMPTY_LISTINGS: Listing[] = [];
+
 export function MarketplacePage() {
   const { profile } = useAuth();
   const [viewerLocation, setViewerLocation] = useState<SelectedLocation>({
@@ -34,50 +36,71 @@ export function MarketplacePage() {
   const [cat, setCat] = useState<MaterialCategory | "All categories">("All categories");
   const [sort, setSort] = useState<SortOption>("Nearest first");
   const [verifiedOnly, setVerifiedOnly] = useState(false);
-  const [listings, setListings] = useState<Listing[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const unresolvedSearchLocation = Boolean(
-    viewerLocation.address.trim() &&
-      (viewerLocation.lat == null || viewerLocation.lng == null)
-  );
-  const searchLoading = loading && !unresolvedSearchLocation;
-
-  useEffect(() => {
-    if (!profile) return;
+  const [listingResult, setListingResult] = useState<{
+    key: string;
+    listings: Listing[];
+    error: string | null;
+  } | null>(null);
+  const [appliedProfileKey, setAppliedProfileKey] = useState<string | null>(null);
+  const profileKey = profile
+    ? JSON.stringify([
+        profile.id,
+        profile.address,
+        profile.lat,
+        profile.lng,
+      ])
+    : null;
+  if (profile && profileKey !== appliedProfileKey) {
     setViewerLocation({
       address: profile.address || "",
       lat: profile.lat,
       lng: profile.lng,
     });
-  }, [profile?.address, profile?.lat, profile?.lng]);
+    setAppliedProfileKey(profileKey);
+  }
+  const unresolvedSearchLocation = Boolean(
+    viewerLocation.address.trim() &&
+      (viewerLocation.lat == null || viewerLocation.lng == null)
+  );
+  const requestKey = JSON.stringify([
+    profile?.cluster,
+    viewerLocation.lat,
+    viewerLocation.lng,
+    unresolvedSearchLocation,
+  ]);
+  const currentListingResult =
+    !unresolvedSearchLocation && listingResult?.key === requestKey
+      ? listingResult
+      : null;
+  const listings = currentListingResult?.listings ?? EMPTY_LISTINGS;
+  const error = currentListingResult?.error ?? null;
+  const loading = Boolean(!unresolvedSearchLocation && !currentListingResult);
+  const searchLoading = loading && !unresolvedSearchLocation;
 
   useEffect(() => {
     if (unresolvedSearchLocation) return;
 
     let active = true;
-    setLoading(true);
-    setError(null);
     void fetchLiveListings(profile?.cluster, viewerLocation)
       .then((rows) => {
         if (!active) return;
-        setListings(rows);
+        setListingResult({ key: requestKey, listings: rows, error: null });
       })
       .catch((err) => {
         if (!active) return;
-        setError(err instanceof Error ? err.message : "Could not load listings");
-        setListings([]);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
+        setListingResult({
+          key: requestKey,
+          listings: [],
+          error: err instanceof Error ? err.message : "Could not load listings",
+        });
       });
     return () => {
       active = false;
     };
   }, [
+    requestKey,
     profile?.cluster,
-    viewerLocation.lat,
-    viewerLocation.lng,
+    viewerLocation,
     unresolvedSearchLocation,
   ]);
 

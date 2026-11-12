@@ -6,6 +6,7 @@ from api.models import (
     Transaction,
     CarbonRecord,
     Message,
+    Dispute,
 )
 
 @admin.register(Profile)
@@ -55,3 +56,9 @@ class MessageAdmin(admin.ModelAdmin):
         return obj.body[:40]
     body_preview.short_description = 'Body'
 
+@admin.register(Dispute)
+class DisputeAdmin(admin.ModelAdmin):
+    list_display = ('transaction', 'raised_by', 'status', 'created_at', 'updated_at')
+    list_filter = ('status',)
+    search_fields = ('transaction__listing__title', 'raised_by__email', 'reason')
+    readonly_fields = ('transaction', 'raised_by', 'reason', 'created_at')

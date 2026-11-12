@@ -54,6 +54,8 @@ export function ProfilePage() {
   const [savingImpact, setSavingImpact] = useState(false);
   const [savingCreds, setSavingCreds] = useState(false);
   const avatarRef = useRef<HTMLInputElement>(null);
+  const [appliedProfileKey, setAppliedProfileKey] = useState<string | null>(null);
+  const [emailInitializedFor, setEmailInitializedFor] = useState<string | null>(null);
 
   function hasUnresolvedLocation() {
     return Boolean(
@@ -69,8 +71,21 @@ export function ProfilePage() {
     }
   }, [ready, user, openAuth, router]);
 
-  useEffect(() => {
-    if (!profile) return;
+  const profileKey = profile
+    ? JSON.stringify([
+        profile.id,
+        profile.business_name,
+        profile.phone,
+        profile.cluster,
+        profile.address,
+        profile.lat,
+        profile.lng,
+        profile.sells,
+        profile.buys,
+        profile.carbon_impact,
+      ])
+    : null;
+  if (profile && profileKey !== appliedProfileKey) {
     setBusinessName(profile.business_name || "");
     setPhone(profile.phone || "");
     setCluster(profile.cluster || "Ogba");
@@ -82,11 +97,13 @@ export function ProfilePage() {
     setSells(profile.sells);
     setBuys(profile.buys);
     setCarbonImpact(profile.carbon_impact);
-  }, [profile]);
+    setAppliedProfileKey(profileKey);
+  }
 
-  useEffect(() => {
-    if (user?.email) setEmail(user.email);
-  }, [user?.email]);
+  if (user?.email && user.id !== emailInitializedFor) {
+    setEmail(user.email);
+    setEmailInitializedFor(user.id);
+  }
 
   if (!ready || !user) {
     return (

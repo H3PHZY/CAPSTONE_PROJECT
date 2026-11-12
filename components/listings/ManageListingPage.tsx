@@ -28,7 +28,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
   const { ready, user, openAuth } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [loading, setLoading] = useState(true);
+  const [loadedRequestKey, setLoadedRequestKey] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -44,6 +44,8 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [extraUrls, setExtraUrls] = useState<string[]>([]);
   const [activePhoto, setActivePhoto] = useState<string | null>(null);
+  const requestKey = ready && user ? `${id}:${user.id}` : null;
+  const loading = Boolean(requestKey && loadedRequestKey !== requestKey);
 
   const gallery = [coverUrl, ...extraUrls].filter(
     (u): u is string => Boolean(u && u.trim())
@@ -64,9 +66,6 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
     }
 
     let active = true;
-    setLoading(true);
-    setError(null);
-
     void fetchOwnedListing(id, user.id)
       .then((row) => {
         if (!active) return;
@@ -74,6 +73,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
           setError("Listing not found, or you are not the seller.");
           return;
         }
+        setError(null);
         const photos = listingPhotoGallery(row);
         setTitle(row.title);
         setWeight(String(row.weight_kg));
@@ -94,13 +94,13 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
         setError(err instanceof Error ? err.message : "Could not load listing");
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) setLoadedRequestKey(requestKey);
       });
 
     return () => {
       active = false;
     };
-  }, [ready, user, id, openAuth, router]);
+  }, [ready, user, id, openAuth, router, requestKey]);
 
   async function onAddPhotos(files: FileList | null) {
     if (!user || !files?.length) return;
@@ -193,7 +193,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
 
     setSaving(true);
     try {
-      const updated = await updateOwnedListing(id, user.id, {
+      const updated = await updateOwnedListing(id, {
         title,
         weightKg,
         priceNgn,

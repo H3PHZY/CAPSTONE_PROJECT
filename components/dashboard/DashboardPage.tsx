@@ -23,9 +23,9 @@ export function DashboardPage() {
     void (async () => {
       try {
         const [mine, impact, txns, live] = await Promise.all([
-          fetchMyListings(user.id),
-          fetchCarbonImpact(user.id),
-          fetchMyTransactions(user.id),
+          fetchMyListings(),
+          fetchCarbonImpact(),
+          fetchMyTransactions(),
           fetchLiveListings().catch(() => []),
         ]);
         if (!alive) return;

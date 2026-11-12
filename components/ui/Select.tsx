@@ -55,10 +55,7 @@ export function Select({
   }
 
   useLayoutEffect(() => {
-    if (!open) {
-      setPos(null);
-      return;
-    }
+    if (!open) return;
     updatePos();
     function onReposition() {
       updatePos();

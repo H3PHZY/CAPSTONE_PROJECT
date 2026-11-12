@@ -20,15 +20,20 @@ from api.views import (
     ClassifyView,
     PaystackInitializeView,
     PaystackVerifyView,
+    PaystackWebhookView,
     MediaUploadView,
+    HealthView,
+    DisputeViewSet,
 )
 
 router = DefaultRouter()
 router.register(r'listings', ListingViewSet, basename='listing')
 router.register(r'transactions', TransactionViewSet, basename='transaction')
 router.register(r'messages', MessageViewSet, basename='message')
+router.register(r'disputes', DisputeViewSet, basename='dispute')
 
 urlpatterns = [
+    path('health/', HealthView.as_view(), name='health'),
     # OpenAPI 3.0 Schema and Swagger Documentation
     path('schema/', SpectacularAPIView.as_view(), name='schema'),
     path('docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
@@ -48,6 +53,7 @@ urlpatterns = [
     path('media/upload/', MediaUploadView.as_view(), name='media-upload'),
     path('pay/initialize/', PaystackInitializeView.as_view(), name='paystack-initialize'),
     path('pay/verify/', PaystackVerifyView.as_view(), name='paystack-verify'),
+    path('pay/webhook/', PaystackWebhookView.as_view(), name='paystack-webhook'),
 
     # ViewSet routes
     path('', include(router.urls)),

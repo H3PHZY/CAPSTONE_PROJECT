@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import date
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from rest_framework import serializers
@@ -11,6 +12,7 @@ from api.models import (
     ListingStatus,
     CarbonRecord,
     Message,
+    Dispute,
     MaterialCategory,
 )
 from api.utils import haversine_km, calculate_co2_kg, get_coords_for_zone
@@ -32,6 +34,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'cluster',
             'zone',
             'address',
+            'date_of_birth',
             'sells',
             'buys',
             'carbon_impact',
@@ -45,7 +48,7 @@ class ProfileSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['verified', 'created_at', 'updated_at']
+        read_only_fields = ['verified', 'date_of_birth', 'created_at', 'updated_at']
 
     def validate(self, attrs):
         lat_provided = 'lat' in attrs
@@ -84,6 +87,7 @@ class UserSerializer(serializers.ModelSerializer):
 class SignupSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
     password = serializers.CharField(write_only=True, required=True, min_length=8)
+    date_of_birth = serializers.DateField(required=True)
     business_name = serializers.CharField(required=False, allow_blank=True, default='')
     cluster = serializers.CharField(required=False, default='Ogba')
     phone = serializers.CharField(required=False, allow_blank=True, default='')
@@ -91,6 +95,16 @@ class SignupSerializer(serializers.Serializer):
     buys = serializers.BooleanField(required=False, default=False)
     carbon_impact = serializers.BooleanField(required=False, default=False)
     research_consent = serializers.BooleanField(required=False, default=False)
+
+    def validate_date_of_birth(self, value):
+        today = date.today()
+        try:
+            eighteenth_birthday = value.replace(year=value.year + 18)
+        except ValueError:
+            eighteenth_birthday = value.replace(year=value.year + 18, day=28)
+        if eighteenth_birthday > today:
+            raise serializers.ValidationError('You must be at least 18 years old to sign up.')
+        return value
 
     def validate_email(self, value):
         if User.objects.filter(email__iexact=value).exists():
@@ -108,6 +122,7 @@ class SignupSerializer(serializers.Serializer):
                 password=password
             )
             profile = user.profile
+            profile.date_of_birth = validated_data['date_of_birth']
             profile.business_name = validated_data.get('business_name', '')
             profile.cluster = validated_data.get('cluster', 'Ogba')
             profile.phone = validated_data.get('phone', '')
@@ -188,7 +203,7 @@ class ListingSerializer(serializers.ModelSerializer):
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['id', 'views', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'status', 'views', 'created_at', 'updated_at']
 
     def get_seller_name(self, obj) -> str:
         profile = getattr(obj.seller, 'profile', None)
@@ -262,6 +277,7 @@ class ListingCreateSerializer(serializers.ModelSerializer):
     overridden = serializers.BooleanField(required=False, default=False)
     model_id = serializers.CharField(required=False, default='hf-endpoint', allow_blank=True)
     raw_labels = serializers.JSONField(required=False, default=dict)
+    is_draft = serializers.BooleanField(write_only=True, required=False, default=False)
 
     class Meta:
         model = Listing
@@ -284,6 +300,7 @@ class ListingCreateSerializer(serializers.ModelSerializer):
             'overridden',
             'model_id',
             'raw_labels',
+            'is_draft',
         ]
 
     def validate(self, attrs):
@@ -293,15 +310,6 @@ class ListingCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {'lat': 'Latitude and longitude must be provided together.'}
             )
-        address = attrs.get('address', '').strip()
-        if address and (
-            not lat_provided
-            or attrs['lat'] is None
-            or attrs['lng'] is None
-        ):
-            raise serializers.ValidationError(
-                {'address': 'Resolve the pickup address to coordinates before publishing.'}
-            )
         return attrs
 
     def create(self, validated_data):
@@ -310,10 +318,11 @@ class ListingCreateSerializer(serializers.ModelSerializer):
         overridden = validated_data.pop('overridden', False)
         model_id = validated_data.pop('model_id', 'hf-endpoint')
         raw_labels = validated_data.pop('raw_labels', None)
+        is_draft = validated_data.pop('is_draft', False)
 
         request = self.context.get('request')
         validated_data['seller'] = request.user
-        validated_data['status'] = ListingStatus.LIVE
+        validated_data['status'] = ListingStatus.DRAFT if is_draft else ListingStatus.LIVE
 
         with transaction.atomic():
             listing = Listing.objects.create(**validated_data)
@@ -337,6 +346,7 @@ class TransactionSerializer(serializers.ModelSerializer):
     listing_material = serializers.CharField(source='listing.material', read_only=True)
     listing_weight = serializers.DecimalField(source='listing.weight_kg', max_digits=12, decimal_places=2, read_only=True)
     listing_price = serializers.DecimalField(source='listing.price_ngn', max_digits=14, decimal_places=2, read_only=True)
+    amount_ngn = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
     counterparty_name = serializers.SerializerMethodField()
     counterparty_id = serializers.SerializerMethodField()
     co2e_kg = serializers.SerializerMethodField()
@@ -350,6 +360,8 @@ class TransactionSerializer(serializers.ModelSerializer):
             'listing_material',
             'listing_weight',
             'listing_price',
+            'amount_ngn',
+            'currency',
             'buyer_id',
             'seller_id',
             'counterparty_name',
@@ -361,6 +373,16 @@ class TransactionSerializer(serializers.ModelSerializer):
             'co2e_kg',
             'created_at',
             'updated_at',
+        ]
+        read_only_fields = [
+            'status',
+            'payment_ref',
+            'paid_at',
+            'completed_at',
+            'created_at',
+            'updated_at',
+            'amount_ngn',
+            'currency',
         ]
 
     def get_counterparty_id(self, obj) -> str:
@@ -378,6 +400,59 @@ class TransactionSerializer(serializers.ModelSerializer):
     def get_co2e_kg(self, obj) -> int | None:
         rec = getattr(obj, 'carbon_record', None)
         return int(rec.co2e_kg) if rec else None
+
+
+class DisputeSerializer(serializers.ModelSerializer):
+    raised_by_id = serializers.CharField(source='raised_by.id', read_only=True)
+    transaction_id = serializers.UUIDField()
+
+    class Meta:
+        model = Dispute
+        fields = [
+            'id',
+            'transaction_id',
+            'raised_by_id',
+            'reason',
+            'status',
+            'resolution_note',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'id',
+            'raised_by_id',
+            'status',
+            'resolution_note',
+            'created_at',
+            'updated_at',
+        ]
+
+    def validate_reason(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('A reason is required.')
+        return value.strip()
+
+    def validate_transaction_id(self, value):
+        request = self.context['request']
+        txn = DealTransaction.objects.filter(pk=value).first()
+        if txn is None:
+            raise serializers.ValidationError('Transaction not found.')
+        if txn.buyer_id != request.user.id:
+            raise serializers.ValidationError('Only the buyer can raise a dispute.')
+        if txn.paid_at is None:
+            raise serializers.ValidationError('A dispute requires a paid transaction.')
+        if txn.disputes.filter(status='Open').exists():
+            raise serializers.ValidationError('This transaction already has an open dispute.')
+        return value
+
+    def create(self, validated_data):
+        transaction_id = validated_data.pop('transaction_id')
+        return Dispute.objects.create(
+            transaction_id=transaction_id,
+            raised_by=self.context['request'].user,
+            **validated_data,
+        )
+
 
 # ─── Message Serializers ─────────────────────────────────────────────────────
 

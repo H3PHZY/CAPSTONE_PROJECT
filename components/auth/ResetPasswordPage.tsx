@@ -1,31 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { djangoRequest } from "@/lib/django-api";
 
 export function ResetPasswordPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { openAuth, ready } = useAuth();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [resetToken, setResetToken] = useState<{ uid: string; token: string } | null>(
-    null
-  );
-  const [checking, setChecking] = useState(true);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const uid = params.get("uid");
-    const token = params.get("token");
-    if (uid && token) setResetToken({ uid, token });
-    setChecking(false);
-  }, []);
+  const uid = searchParams.get("uid");
+  const token = searchParams.get("token");
+  const resetToken = uid && token ? { uid, token } : null;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -58,7 +50,7 @@ export function ResetPasswordPage() {
     }
   }
 
-  if (!ready || checking) {
+  if (!ready) {
     return (
       <div className="page-shell">
         <div className="page-sub">Checking reset link…</div>
@@ -141,5 +133,19 @@ export function ResetPasswordPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export function ResetPasswordPageWithSuspense() {
+  return (
+    <Suspense
+      fallback={
+        <div className="page-shell">
+          <div className="page-sub">Checking reset link…</div>
+        </div>
+      }
+    >
+      <ResetPasswordPage />
+    </Suspense>
   );
 }

@@ -1,5 +1,8 @@
 from decimal import Decimal
 from pathlib import PurePath
+import hashlib
+import hmac
+import json
 import secrets
 import uuid
 import requests
@@ -12,14 +15,16 @@ from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
 from django.db import transaction as db_transaction
 from django.db.models import Q, Sum, Count, Case, When, IntegerField
+from datetime import timedelta
 from django.core.files.storage import default_storage, storages
 from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-from rest_framework import viewsets, status, views
+from rest_framework import mixins, viewsets, status, views
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from api.models import (
@@ -31,6 +36,8 @@ from api.models import (
     ListingStatus,
     CarbonRecord,
     Message,
+    Dispute,
+    DisputeStatus,
 )
 from api.serializers import (
     SignupSerializer,
@@ -50,6 +57,7 @@ from api.serializers import (
     PasswordResetConfirmSerializer,
     DetailResponseSerializer,
     MediaUploadResponseSerializer,
+    DisputeSerializer,
 )
 from api.permissions import (
     IsProfileOwnerOrReadOnly,
@@ -65,10 +73,45 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
 User = get_user_model()
 
+
+def expire_stale_payment_holds(now=None):
+    now = now or timezone.now()
+    expired_before = now - timedelta(minutes=settings.PAYMENT_HOLD_MINUTES)
+    with db_transaction.atomic():
+        expired = list(
+            DealTransaction.objects.select_for_update()
+            .filter(
+                status=TransactionStatus.RESERVED,
+                payment_ref__isnull=False,
+                paid_at__isnull=True,
+                updated_at__lt=expired_before,
+            )
+            .select_related('listing')
+        )
+        for txn in expired:
+            txn.status = TransactionStatus.INTEREST
+            txn.payment_ref = None
+            txn.save(update_fields=['status', 'payment_ref', 'updated_at'])
+            listing = Listing.objects.select_for_update().get(pk=txn.listing_id)
+            if (
+                listing.status == ListingStatus.RESERVED
+                and not DealTransaction.objects.filter(
+                    listing_id=listing.pk,
+                    status__in=[TransactionStatus.RESERVED, TransactionStatus.COMPLETED],
+                ).exists()
+            ):
+                Listing.objects.filter(pk=listing.pk).update(
+                    status=ListingStatus.LIVE,
+                    updated_at=now,
+                )
+
+
 # ─── 1. Authentication Views ──────────────────────────────────────────────────
 
 class SignupView(views.APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'signup'
 
     @extend_schema(
         request=SignupSerializer,
@@ -91,6 +134,8 @@ class SignupView(views.APIView):
 
 class LoginView(views.APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'login'
 
     @extend_schema(
         request=LoginRequestSerializer,
@@ -173,6 +218,8 @@ class MeView(views.APIView):
 
 class PasswordResetRequestView(views.APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'password_reset'
 
     @extend_schema(
         request=PasswordResetRequestSerializer,
@@ -202,6 +249,8 @@ class PasswordResetRequestView(views.APIView):
 
 class PasswordResetConfirmView(views.APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'password_reset'
 
     @extend_schema(
         request=PasswordResetConfirmSerializer,
@@ -253,6 +302,7 @@ class ListingViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
             return Listing.objects.none()
+        expire_stale_payment_holds()
         user = self.request.user
         qs = Listing.objects.select_related('seller__profile', 'classification').all()
 
@@ -341,9 +391,21 @@ class ListingViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
     def mine(self, request):
         """Returns the authenticated seller's inventory across all statuses."""
+        expire_stale_payment_holds()
         qs = Listing.objects.filter(seller=request.user).select_related('classification')
         serializer = ListingSerializer(qs, many=True, context={'request': request})
         return Response(serializer.data)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
+    def publish(self, request, pk=None):
+        listing = self.get_object()
+        if listing.seller_id != request.user.id:
+            return Response({'error': 'You do not own this listing.'}, status=403)
+        if listing.status != ListingStatus.DRAFT:
+            return Response({'error': 'Only draft listings can be published.'}, status=400)
+        listing.status = ListingStatus.LIVE
+        listing.save(update_fields=['status', 'updated_at'])
+        return Response(ListingSerializer(listing, context={'request': request}).data)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated])
     def add_photos(self, request, pk=None):
@@ -379,13 +441,14 @@ class ListingViewSet(viewsets.ModelViewSet):
 
 # ─── 3. Transaction ViewSet ───────────────────────────────────────────────────
 
-class TransactionViewSet(viewsets.ModelViewSet):
+class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = TransactionSerializer
     permission_classes = [IsAuthenticated, IsTransactionParty]
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
-            return Listing.objects.none()
+            return DealTransaction.objects.none()
+        expire_stale_payment_holds()
         user = self.request.user
         return DealTransaction.objects.filter(
             Q(buyer=user) | Q(seller=user)
@@ -411,6 +474,7 @@ class TransactionViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Buyer not found.'}, status=404)
 
         with db_transaction.atomic():
+            expire_stale_payment_holds()
             listing = Listing.objects.select_for_update().filter(id=listing_id).first()
             if not listing:
                 return Response({'error': 'Listing not found.'}, status=404)
@@ -437,12 +501,20 @@ class TransactionViewSet(viewsets.ModelViewSet):
                 listing=listing,
                 buyer=buyer,
                 seller=request.user,
-                defaults={'status': TransactionStatus.RESERVED}
+                defaults={
+                    'status': TransactionStatus.RESERVED,
+                    'amount_ngn': listing.price_ngn,
+                    'currency': 'NGN',
+                }
             )
 
+            if txn.disputes.filter(status=DisputeStatus.OPEN).exists():
+                return Response({'error': 'An open dispute blocks deal status changes.'}, status=409)
             if txn.status != TransactionStatus.RESERVED:
                 txn.status = TransactionStatus.RESERVED
-                txn.save(update_fields=['status', 'updated_at'])
+                txn.amount_ngn = listing.price_ngn
+                txn.currency = 'NGN'
+                txn.save(update_fields=['status', 'amount_ngn', 'currency', 'updated_at'])
 
             listing.status = ListingStatus.RESERVED
             listing.save(update_fields=['status', 'updated_at'])
@@ -474,6 +546,12 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
             if txn.status == TransactionStatus.INTEREST:
                 return Response({'error': 'Reserve this deal first.'}, status=400)
+            if txn.paid_at is None:
+                return Response({'error': 'Payment is required before completing this deal.'}, status=400)
+            if txn.disputes.filter(status=DisputeStatus.OPEN).exists():
+                return Response({'error': 'An open dispute blocks deal status changes.'}, status=409)
+            if txn.status == TransactionStatus.COMPLETED:
+                return Response(TransactionSerializer(txn, context={'request': request}).data)
 
             txn.status = TransactionStatus.COMPLETED
             txn.completed_at = timezone.now()
@@ -483,13 +561,18 @@ class TransactionViewSet(viewsets.ModelViewSet):
 
 # ─── 4. Message ViewSet ───────────────────────────────────────────────────────
 
-class MessageViewSet(viewsets.ModelViewSet):
+class MessageViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    viewsets.GenericViewSet,
+):
     serializer_class = MessageSerializer
     permission_classes = [IsAuthenticated, IsMessageParticipant]
 
     def get_queryset(self):
         if getattr(self, 'swagger_fake_view', False):
-            return Listing.objects.none()
+            return Message.objects.none()
         user = self.request.user
         return Message.objects.filter(
             Q(sender=user) | Q(recipient=user)
@@ -548,6 +631,34 @@ class MessageViewSet(viewsets.ModelViewSet):
         ).order_by('created_at')
 
         return Response(MessageSerializer(messages, many=True, context={'request': request}).data)
+
+
+class DisputeViewSet(
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    mixins.CreateModelMixin,
+    viewsets.GenericViewSet,
+):
+    permission_classes = [IsAuthenticated]
+    serializer_class = DisputeSerializer
+
+    def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return Dispute.objects.none()
+        return Dispute.objects.filter(
+            Q(transaction__buyer=self.request.user)
+            | Q(transaction__seller=self.request.user)
+        ).select_related('transaction', 'raised_by')
+
+
+class HealthView(views.APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    @extend_schema(responses=OpenApiTypes.OBJECT)
+    def get(self, request):
+        return Response({'status': 'ok'})
+
 
 # ─── 5. Carbon Impact View ────────────────────────────────────────────────────
 
@@ -727,6 +838,8 @@ class MediaUploadView(views.APIView):
 class PaystackInitializeView(views.APIView):
     """Reserve an available listing and persist its server-generated payment reference."""
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'pay'
 
     @extend_schema(
         request=PaystackInitializeSerializer,
@@ -739,6 +852,7 @@ class PaystackInitializeView(views.APIView):
         serializer.is_valid(raise_exception=True)
         listing_id = serializer.validated_data['listingId']
 
+        expire_stale_payment_holds()
         with db_transaction.atomic():
             listing = Listing.objects.select_for_update().filter(id=listing_id).first()
             if not listing:
@@ -780,6 +894,11 @@ class PaystackInitializeView(views.APIView):
                 buyer=request.user,
                 seller=listing.seller,
             ).first()
+            if txn and txn.disputes.filter(status=DisputeStatus.OPEN).exists():
+                return Response(
+                    {'error': 'An open dispute blocks payment initialization.'},
+                    status=status.HTTP_409_CONFLICT
+                )
             if txn and txn.status == TransactionStatus.COMPLETED:
                 return Response(
                     {'error': 'This purchase has already been completed.'},
@@ -790,12 +909,16 @@ class PaystackInitializeView(views.APIView):
                 txn.payment_ref = reference
                 txn.paid_at = None
                 txn.completed_at = None
+                txn.amount_ngn = listing.price_ngn
+                txn.currency = 'NGN'
                 txn.save(
                     update_fields=[
                         'status',
                         'payment_ref',
                         'paid_at',
                         'completed_at',
+                        'amount_ngn',
+                        'currency',
                         'updated_at',
                     ]
                 )
@@ -806,10 +929,12 @@ class PaystackInitializeView(views.APIView):
                     seller=listing.seller,
                     status=TransactionStatus.RESERVED,
                     payment_ref=reference,
+                    amount_ngn=listing.price_ngn,
+                    currency='NGN',
                 )
 
-            amount_ngn = float(listing.price_ngn)
-            amount_kobo = int(listing.price_ngn * 100)
+            amount_ngn = float(txn.amount_ngn if txn else listing.price_ngn)
+            amount_kobo = int((txn.amount_ngn if txn else listing.price_ngn) * 100)
 
             return Response({
                 'ok': True,
@@ -825,6 +950,8 @@ class PaystackInitializeView(views.APIView):
 class PaystackVerifyView(views.APIView):
     """Verify a bound, unused Paystack payment before completing the reserved deal."""
     permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'pay'
 
     @extend_schema(
         request=PaystackVerifySerializer,
@@ -872,12 +999,14 @@ class PaystackVerifyView(views.APIView):
                     status=status.HTTP_409_CONFLICT
                 )
 
-            # Ground truth price from DB (prevents client price tampering)
-            expected_price_ngn = listing.price_ngn
-            if not expected_price_ngn or expected_price_ngn <= 0:
-                return Response({'error': 'Listing has no valid price.'}, status=status.HTTP_400_BAD_REQUEST)
+            if txn.disputes.filter(status=DisputeStatus.OPEN).exists():
+                return Response({'error': 'An open dispute blocks deal status changes.'}, status=409)
 
-            # Verify with Paystack using database price as ground truth
+            expected_price_ngn = txn.amount_ngn
+            if not expected_price_ngn or expected_price_ngn <= 0 or txn.currency != 'NGN':
+                return Response({'error': 'This transaction has no valid NGN payment amount.'}, status=400)
+
+            # Verify against the immutable amount snapshot stored at initialization.
             verify_paystack_transaction(ref, expected_price_ngn)
 
             txn.status = TransactionStatus.COMPLETED
@@ -892,3 +1021,63 @@ class PaystackVerifyView(views.APIView):
             'amountNgn': float(expected_price_ngn),
             'message': 'Payment verified and listing marked as Sold.'
         })
+
+
+class PaystackWebhookView(views.APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'pay'
+
+    @extend_schema(
+        request=OpenApiTypes.OBJECT,
+        responses=OpenApiTypes.OBJECT,
+    )
+    def post(self, request):
+        secret = settings.PAYSTACK_SECRET_KEY
+        signature = request.headers.get('x-paystack-signature', '')
+        if not secret or not signature:
+            return Response({'error': 'Invalid webhook signature.'}, status=400)
+        expected_signature = hmac.new(
+            secret.encode('utf-8'),
+            request.body,
+            hashlib.sha512,
+        ).hexdigest()
+        if not hmac.compare_digest(signature, expected_signature):
+            return Response({'error': 'Invalid webhook signature.'}, status=400)
+
+        try:
+            event = json.loads(request.body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return Response({'error': 'Invalid webhook payload.'}, status=400)
+        if not isinstance(event, dict) or event.get('event') != 'charge.success':
+            return Response({'received': True, 'ignored': True})
+        data = event.get('data')
+        reference = data.get('reference') if isinstance(data, dict) else None
+        if not isinstance(reference, str) or not reference.strip():
+            return Response({'error': 'Webhook reference is required.'}, status=400)
+
+        txn = DealTransaction.objects.filter(payment_ref=reference).select_related('listing').first()
+        if txn is None:
+            return Response({'error': 'Payment reference not found.'}, status=404)
+        if txn.status == TransactionStatus.COMPLETED and txn.paid_at:
+            return Response({'received': True, 'already_processed': True})
+        if txn.status != TransactionStatus.RESERVED or not txn.amount_ngn:
+            return Response({'error': 'No active payment exists for this reference.'}, status=409)
+
+        verify_paystack_transaction(reference, txn.amount_ngn)
+        with db_transaction.atomic():
+            locked = DealTransaction.objects.select_for_update().get(pk=txn.pk)
+            listing = Listing.objects.select_for_update().get(pk=locked.listing_id)
+            if locked.status == TransactionStatus.COMPLETED and locked.paid_at:
+                return Response({'received': True, 'already_processed': True})
+            if locked.status != TransactionStatus.RESERVED or locked.payment_ref != reference:
+                return Response({'error': 'Payment reference is no longer active.'}, status=409)
+            if locked.disputes.filter(status=DisputeStatus.OPEN).exists():
+                return Response({'error': 'An open dispute blocks payment completion.'}, status=409)
+            now = timezone.now()
+            locked.status = TransactionStatus.COMPLETED
+            locked.paid_at = now
+            locked.completed_at = now
+            locked.save()
+        return Response({'received': True, 'listingId': str(listing.pk)})

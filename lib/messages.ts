@@ -44,11 +44,7 @@ export function isPaymentNotice(text: string) {
   return /payment received|paystack confirmed|asking price for this exchange/i.test(text);
 }
 
-function threadKey(listingId: string, otherUserId: string) {
-  return `${listingId}:${otherUserId}`;
-}
-
-export async function fetchInbox(_userId: string): Promise<MessageThread[]> {
+export async function fetchInbox(): Promise<MessageThread[]> {
   const rows = await djangoMessages.fetchInbox();
   return rows.map((row) => ({
     ...row,
@@ -57,7 +53,6 @@ export async function fetchInbox(_userId: string): Promise<MessageThread[]> {
 }
 
 export async function fetchThreadMessages(
-  _userId: string,
   listingId: string,
   otherUserId: string
 ): Promise<ChatMessage[]> {

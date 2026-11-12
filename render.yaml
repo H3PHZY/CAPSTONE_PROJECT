@@ -4,15 +4,16 @@ services:
     runtime: python
     plan: free
     rootDir: backend
-    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
-    releaseCommand: python manage.py migrate --noinput
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate --noinput
     startCommand: gunicorn ecoloop.wsgi:application --bind 0.0.0.0:$PORT --workers 2
-    healthCheckPath: /api/docs/
+    healthCheckPath: /api/health/
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.8
       - key: DATABASE_URL
         sync: false
+      - key: PAYMENT_HOLD_MINUTES
+        value: "30"
       - key: SECRET_KEY
         generateValue: true
       - key: DEBUG

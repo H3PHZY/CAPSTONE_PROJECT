@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 @receiver(post_save, sender=settings.AUTH_USER_MODEL)
 def handle_new_user(sender, instance, created, **kwargs):
     """
-    Replaces Supabase handle_new_user() trigger (migration 001).
-    Ensures every user has an associated Profile.
+    Ensure every new user has an associated Profile.
     """
     if created:
         Profile.objects.get_or_create(user=instance)
@@ -32,8 +31,7 @@ def handle_new_user(sender, instance, created, **kwargs):
 @receiver(post_save, sender=Transaction)
 def apply_transaction_listing_status(sender, instance, created, **kwargs):
     """
-    Replaces Supabase apply_transaction_listing_status() trigger (migration 002).
-    Keeps listing status synced when deal transitions to Reserved or Completed.
+    Keep listing status synced when a deal transitions to Reserved or Completed.
     Also creates CarbonRecord on completion.
     """
     listing = instance.listing
@@ -93,4 +91,3 @@ def create_interest_on_first_message(sender, instance, created, **kwargs):
             seller=seller,
             defaults={'status': TransactionStatus.INTEREST}
         )
-

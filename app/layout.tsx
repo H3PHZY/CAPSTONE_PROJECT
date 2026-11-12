@@ -3,6 +3,7 @@ import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { AuthGate } from "@/components/auth/AuthGate";
 import { AppHeader } from "@/components/layout/AppHeader";
 import { AppNav } from "@/components/layout/AppNav";
+import { ApiWakeupNotice } from "@/components/layout/ApiWakeupNotice";
 import { MessageToastNotifier } from "@/components/messages/MessageToastNotifier";
 import { AuthProvider } from "@/lib/auth-context";
 import "./globals.css";
@@ -40,6 +41,7 @@ export default function RootLayout({
       <body>
         <AuthProvider>
           <AppHeader />
+          <ApiWakeupNotice />
           <AppNav />
           <AuthGate>
             <main>{children}</main>

@@ -23,18 +23,16 @@ export function ListingDetail({ id }: ListingDetailProps) {
   const router = useRouter();
   const { user, profile, openAuth } = useAuth();
   const [listing, setListing] = useState<Listing | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activePhoto, setActivePhoto] = useState<string | null>(null);
   // Tracks local sold state so UI updates instantly after purchase
   const [soldLocally, setSoldLocally] = useState(false);
+  const requestKey = JSON.stringify([id, profile?.cluster, profile?.lat, profile?.lng]);
+  const loading = loadedKey !== requestKey;
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setError(null);
-    setActivePhoto(null);
-
     void fetchListingById(id, profile?.cluster, {
       lat: profile?.lat ?? null,
       lng: profile?.lng ?? null,
@@ -46,6 +44,7 @@ export function ListingDetail({ id }: ListingDetailProps) {
           setListing(null);
           return;
         }
+        setError(null);
         setListing(row);
         const gallery =
           row.photoUrls && row.photoUrls.length > 0
@@ -60,12 +59,12 @@ export function ListingDetail({ id }: ListingDetailProps) {
         setError(err instanceof Error ? err.message : "Could not load listing");
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) setLoadedKey(requestKey);
       });
     return () => {
       active = false;
     };
-  }, [id, profile?.cluster, profile?.lat, profile?.lng]);
+  }, [id, profile?.cluster, profile?.lat, profile?.lng, requestKey]);
 
   if (loading) {
     return (
@@ -157,10 +156,8 @@ export function ListingDetail({ id }: ListingDetailProps) {
   // listing.seller holds the business name — we need seller_id from raw data;
   // we do a cheaper check: if the user is the verified owner they can manage it.
   const rawStatus = soldLocally ? "Sold" : listing?.status;
-  const isLive = rawStatus === "Live";
   const isSold = rawStatus === "Sold";
   const isReserved = rawStatus === "Reserved";
-  const canPurchase = isLive && Boolean(user) && !isOwnListing;
   const rawPriceNgn = priceNum(listing?.price ?? "0");
 
   return (
@@ -301,7 +298,6 @@ export function ListingDetail({ id }: ListingDetailProps) {
                       buyerId={user.id}
                       listingId={listing.id}
                       priceFormatted={listing.price}
-                      priceNgn={rawPriceNgn}
                       listingTitle={listing.title}
                       onPurchaseComplete={() => setSoldLocally(true)}
                     />

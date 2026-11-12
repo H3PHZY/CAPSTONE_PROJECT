@@ -28,7 +28,11 @@ function previewFromMessage(body: string, hasFile: boolean): string {
 export function MessageToastNotifier() {
   const { user } = useAuth();
   const pathname = usePathname();
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [toastState, setToastState] = useState<{
+    userId: string;
+    items: ToastItem[];
+  } | null>(null);
+  const toasts = user?.id && toastState?.userId === user.id ? toastState.items : [];
   const pathnameRef = useRef(pathname);
   const seenMessageIds = useRef<Set<string> | null>(null);
   const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
@@ -43,17 +47,29 @@ export function MessageToastNotifier() {
       clearTimeout(timer);
       timers.current.delete(id);
     }
-    setToasts((previous) => previous.filter((toast) => toast.id !== id));
-  }, []);
+    setToastState((previous) =>
+      user && previous?.userId === user.id
+        ? {
+            userId: user.id,
+            items: previous.items.filter((toast) => toast.id !== id),
+          }
+        : previous
+    );
+  }, [user]);
 
   const pushToast = useCallback(
     (item: ToastItem) => {
       if (pathnameRef.current.startsWith("/messages")) return;
-      setToasts((previous) =>
-        [item, ...previous.filter((toast) => toast.id !== item.id)].slice(
-          0,
-          MAX_TOASTS
-        )
+      if (!user) return;
+      setToastState((previous) => ({
+        userId: user.id,
+        items: [
+          item,
+          ...(previous?.userId === user.id
+            ? previous.items.filter((toast) => toast.id !== item.id)
+            : []),
+        ].slice(0, MAX_TOASTS),
+      })
       );
       const currentTimer = timers.current.get(item.id);
       if (currentTimer) clearTimeout(currentTimer);
@@ -62,25 +78,25 @@ export function MessageToastNotifier() {
         setTimeout(() => dismiss(item.id), AUTO_DISMISS_MS)
       );
     },
-    [dismiss]
+    [dismiss, user]
   );
 
   useEffect(() => {
     if (!user) {
       seenMessageIds.current = null;
-      setToasts([]);
       return;
     }
     const userId = user.id;
 
     let active = true;
     let polling = false;
+    const activeTimers = timers.current;
 
     async function pollInbox() {
       if (polling) return;
       polling = true;
       try {
-        const inbox = await fetchInbox(userId);
+        const inbox = await fetchInbox();
         if (!active) return;
         const known = seenMessageIds.current;
         const next = new Set(inbox.map((thread) => thread.lastMessageId));
@@ -116,8 +132,8 @@ export function MessageToastNotifier() {
     return () => {
       active = false;
       clearInterval(interval);
-      for (const timer of timers.current.values()) clearTimeout(timer);
-      timers.current.clear();
+      for (const timer of activeTimers.values()) clearTimeout(timer);
+      activeTimers.clear();
     };
   }, [user, pushToast]);
 

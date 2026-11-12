@@ -1,5 +1,6 @@
 from decimal import Decimal
-from django.core.management.base import BaseCommand
+from datetime import date
+from django.core.management.base import BaseCommand, CommandError
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from api.models import (
@@ -17,19 +18,33 @@ from api.utils import calculate_co2_kg, CO2_FACTORS
 User = get_user_model()
 
 class Command(BaseCommand):
-    help = "Seeds initial demo data for EcoLoop (users, listings, classifications, transactions, messages)"
+    help = "Seeds repeatable EcoLoop demo data for two users and sample listings."
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--password',
+            help='Password assigned only to demo users newly created by this command.',
+        )
 
     def handle(self, *args, **options):
+        password = options.get('password')
+        existing_demo_users = User.objects.filter(
+            username__in=["seller@ecoloop.ng", "buyer@ecoloop.ng"]
+        ).count()
+        if not password and existing_demo_users < 2:
+            raise CommandError('Pass --password to set credentials for newly created demo users.')
         self.stdout.write("Seeding EcoLoop demo data...")
 
         # 1. Create Demo Users & Profiles
-        seller, _ = User.objects.get_or_create(
+        seller, seller_created = User.objects.get_or_create(
             username="seller@ecoloop.ng",
-            email="seller@ecoloop.ng",
+            defaults={"email": "seller@ecoloop.ng"},
         )
-        seller.set_password("password123")
-        seller.save()
+        if seller_created:
+            seller.set_password(password)
+            seller.save(update_fields=['password'])
         p1 = seller.profile
+        p1.date_of_birth = p1.date_of_birth or date(1990, 1, 1)
         p1.business_name = "Rehoboth Metalworks Ltd"
         p1.phone = "+234 803 111 2233"
         p1.cluster = "Ogba"
@@ -40,13 +55,15 @@ class Command(BaseCommand):
         p1.research_consent = True
         p1.save()
 
-        buyer, _ = User.objects.get_or_create(
+        buyer, buyer_created = User.objects.get_or_create(
             username="buyer@ecoloop.ng",
-            email="buyer@ecoloop.ng",
+            defaults={"email": "buyer@ecoloop.ng"},
         )
-        buyer.set_password("password123")
-        buyer.save()
+        if buyer_created:
+            buyer.set_password(password)
+            buyer.save(update_fields=['password'])
         p2 = buyer.profile
+        p2.date_of_birth = p2.date_of_birth or date(1990, 1, 1)
         p2.business_name = "Loop Recyclers Lagos"
         p2.phone = "+234 802 444 5566"
         p2.cluster = "Ikeja"
@@ -56,23 +73,6 @@ class Command(BaseCommand):
         p2.carbon_impact = True
         p2.research_consent = True
         p2.save()
-
-        peer_seller, _ = User.objects.get_or_create(
-            username="kola@ecoloop.ng",
-            email="kola@ecoloop.ng",
-        )
-        peer_seller.set_password("password123")
-        peer_seller.save()
-        p3 = peer_seller.profile
-        p3.business_name = "Kola Print & Pack"
-        p3.phone = "+234 809 777 8899"
-        p3.cluster = "Isolo"
-        p3.zone = "Isolo"
-        p3.sells = True
-        p3.buys = True
-        p3.carbon_impact = True
-        p3.research_consent = True
-        p3.save()
 
         # 2. Seed Sample Listings
         listings_data = [
@@ -101,7 +101,7 @@ class Command(BaseCommand):
                 "confidence": Decimal("0.89"),
             },
             {
-                "seller": peer_seller,
+                "seller": seller,
                 "title": "Pallet timber & softwood battens",
                 "material": MaterialCategory.BIODEGRADABLE,
                 "weight_kg": Decimal("240.00"),
@@ -113,7 +113,7 @@ class Command(BaseCommand):
                 "confidence": Decimal("0.91"),
             },
             {
-                "seller": peer_seller,
+                "seller": seller,
                 "title": "Industrial conveyor rubber scrap & belts",
                 "material": MaterialCategory.RUBBER,
                 "weight_kg": Decimal("120.00"),
@@ -167,8 +167,20 @@ class Command(BaseCommand):
             defaults={
                 "status": TransactionStatus.COMPLETED,
                 "completed_at": timezone.now(),
+                "paid_at": timezone.now(),
+                "payment_ref": "DEMO-PAYMENT-ALUMINIUM-01",
+                "amount_ngn": l1.price_ngn,
+                "currency": "NGN",
             }
         )
+        if t1.paid_at is None:
+            t1.paid_at = timezone.now()
+            t1.payment_ref = t1.payment_ref or "DEMO-PAYMENT-ALUMINIUM-01"
+        if t1.completed_at is None:
+            t1.completed_at = timezone.now()
+        if t1.amount_ngn is None:
+            t1.amount_ngn = l1.price_ngn
+        t1.save(update_fields=['paid_at', 'payment_ref', 'amount_ngn', 'updated_at'])
         if not hasattr(t1, "carbon_record"):
             co2 = calculate_co2_kg(l1.weight_kg, l1.material)
             CarbonRecord.objects.create(
@@ -195,8 +207,5 @@ class Command(BaseCommand):
         )
 
         self.stdout.write(self.style.SUCCESS("EcoLoop demo data successfully seeded!"))
-        self.stdout.write("Credentials created:")
-        self.stdout.write("  Seller: seller@ecoloop.ng / password123")
-        self.stdout.write("  Buyer:  buyer@ecoloop.ng  / password123")
-        self.stdout.write("  Peer:   kola@ecoloop.ng   / password123")
-
+        self.stdout.write("Demo users: seller@ecoloop.ng and buyer@ecoloop.ng")
+        self.stdout.write("Use the password passed to --password for users created by this run.")

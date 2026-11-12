@@ -13,6 +13,7 @@ import {
   clearTokens,
   DjangoApiError,
   getToken,
+  SESSION_EXPIRED_EVENT,
   setTokens,
 } from "@/lib/django-auth";
 import { djangoRequest } from "@/lib/django-api";
@@ -27,6 +28,7 @@ export type AuthPrefs = {
 
 export type SignupProfile = {
   businessName: string;
+  dateOfBirth: string;
   cluster: string;
   phone: string;
   sells: boolean;
@@ -48,6 +50,7 @@ export interface DjangoProfile {
   cluster: string;
   zone: string | null;
   address: string;
+  date_of_birth: string | null;
   sells: boolean;
   buys: boolean;
   carbon_impact: boolean;
@@ -182,6 +185,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    const handleExpiredSession = () => {
+      setUser(null);
+      setProfile(null);
+      setPrefs(DEFAULT_PREFS);
+      setPendingPath(null);
+      setAuthOpen(false);
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleExpiredSession);
+    return () =>
+      window.removeEventListener(SESSION_EXPIRED_EVENT, handleExpiredSession);
+  }, []);
+
   const isAuthenticated = Boolean(user);
 
   const openAuth = useCallback((mode: AuthMode = "login", nextPath: string | null = null) => {
@@ -204,6 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email,
           password,
           business_name: signup.businessName,
+          date_of_birth: signup.dateOfBirth,
           cluster: signup.cluster,
           phone: signup.phone,
           sells: signup.sells,

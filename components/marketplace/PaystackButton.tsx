@@ -10,8 +10,6 @@ type PaystackButtonProps = {
   listingId: string;
   /** Price as formatted Naira string from the listing API, e.g. "52,000" */
   priceFormatted: string;
-  /** Raw Naira amount (integer). Must match what the DB stored. */
-  priceNgn: number;
   listingTitle: string;
   /** Called after backend confirms Sold so parent can update its state. */
   onPurchaseComplete: () => void;
@@ -29,7 +27,6 @@ export function PaystackButton({
   buyerId,
   listingId,
   priceFormatted,
-  priceNgn,
   listingTitle,
   onPurchaseComplete,
 }: PaystackButtonProps) {

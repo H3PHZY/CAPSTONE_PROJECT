@@ -18,6 +18,7 @@ import {
   sendMessage,
   type MessageThread,
 } from "@/lib/messages";
+import { canManuallyCompleteTransaction } from "@/lib/transaction-ui";
 import {
   getPairTransactionView,
   markAsAgreed,
@@ -41,11 +42,14 @@ export function MessagesPage() {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loadedInboxUserId, setLoadedInboxUserId] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [txn, setTxn] = useState<TransactionView | null>(null);
+  const [txnResult, setTxnResult] = useState<{
+    key: string;
+    view: TransactionView | null;
+  } | null>(null);
   const [replyTo, setReplyTo] = useState<{ id: string; text: string } | null>(null);
   const [attachment, setAttachment] = useState<File | null>(null);
   const [attachmentPreview, setAttachmentPreview] = useState<string | null>(null);
@@ -95,10 +99,17 @@ export function MessagesPage() {
     if (!buyerId || buyerId === sellerId) return null;
     return { buyerId, sellerId };
   }, [user, active]);
+  const txnKey =
+    user && parties && active
+      ? `${active.key}:${parties.buyerId}:${parties.sellerId}`
+      : null;
+  const txn = txnKey && txnResult?.key === txnKey ? txnResult.view : null;
+  const visibleMsgs = active?.key.startsWith("new:") ? [] : msgs;
+  const loading = Boolean(user && loadedInboxUserId !== user.id);
 
   const reloadInbox = useCallback(async () => {
     if (!user) return [];
-    const inbox = await fetchInbox(user.id);
+    const inbox = await fetchInbox();
     setThreads(inbox);
     return inbox;
   }, [user]);
@@ -106,19 +117,16 @@ export function MessagesPage() {
   useEffect(() => {
     if (!ready) return;
     if (!user) {
-      setLoading(false);
       openAuth("login", "/messages");
       return;
     }
 
     let activeEffect = true;
-    setLoading(true);
-    setError(null);
-
     void (async () => {
       try {
         const inbox = await reloadInbox();
         if (!activeEffect) return;
+        setError(null);
 
         if (listingParam) {
           const contact = await resolveListingContact(listingParam, user.id);
@@ -146,8 +154,9 @@ export function MessagesPage() {
       } catch (err) {
         if (!activeEffect) return;
         setError(err instanceof Error ? err.message : "Could not load messages");
+        setThreads([]);
       } finally {
-        if (activeEffect) setLoading(false);
+        if (activeEffect) setLoadedInboxUserId(user.id);
       }
     })();
 
@@ -158,12 +167,11 @@ export function MessagesPage() {
 
   useEffect(() => {
     if (!user || !active || active.key.startsWith("new:")) {
-      if (active?.key.startsWith("new:")) setMsgs([]);
       return;
     }
 
     let alive = true;
-    void fetchThreadMessages(user.id, active.listingId, active.otherUserId)
+    void fetchThreadMessages(active.listingId, active.otherUserId)
       .then((rows) => {
         if (alive) setMsgs(rows);
       })
@@ -176,7 +184,7 @@ export function MessagesPage() {
     return () => {
       alive = false;
     };
-  }, [user, active?.key, active?.listingId, active?.otherUserId]);
+  }, [user, active]);
 
   // Keep the inbox and active thread fresh without a realtime provider.
   useEffect(() => {
@@ -205,7 +213,6 @@ export function MessagesPage() {
         }
         if (current && !current.key.startsWith("new:")) {
           const rows = await fetchThreadMessages(
-            user.id,
             current.listingId,
             current.otherUserId
           );
@@ -233,30 +240,29 @@ export function MessagesPage() {
     const el = msgsBodyRef.current;
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [msgs.length, active?.key]);
+  }, [visibleMsgs.length, active?.key]);
 
   useEffect(() => {
     if (!user || !parties || !active) {
-      setTxn(null);
       return;
     }
     let alive = true;
+    const key = `${active.key}:${parties.buyerId}:${parties.sellerId}`;
     void getPairTransactionView(
       active.listingId,
       parties.buyerId,
-      parties.sellerId,
-      user.id
+      parties.sellerId
     )
       .then((view) => {
-        if (alive) setTxn(view);
+        if (alive) setTxnResult({ key, view });
       })
       .catch(() => {
-        if (alive) setTxn(null);
+        if (alive) setTxnResult({ key, view: null });
       });
     return () => {
       alive = false;
     };
-  }, [user, parties, active?.listingId, active?.key]);
+  }, [user, parties, active]);
 
   async function pushMsg(
     text: string,
@@ -289,7 +295,7 @@ export function MessagesPage() {
       const key = `${active.listingId}:${active.otherUserId}`;
       setPendingContact(null);
       setActiveKey(key);
-      const rows = await fetchThreadMessages(user.id, active.listingId, active.otherUserId);
+      const rows = await fetchThreadMessages(active.listingId, active.otherUserId);
       setMsgs(rows);
       if (listingParam) router.replace("/messages");
       return true;
@@ -372,7 +378,10 @@ export function MessagesPage() {
         sellerId: parties.sellerId,
         actorId: user.id,
       });
-      setTxn(view);
+      setTxnResult({
+        key: `${active.key}:${parties.buyerId}:${parties.sellerId}`,
+        view,
+      });
     } catch (err) {
       const message =
         err instanceof Error
@@ -397,7 +406,10 @@ export function MessagesPage() {
         sellerId: parties.sellerId,
         actorId: user.id,
       });
-      setTxn(view);
+      setTxnResult({
+        key: `${active.key}:${parties.buyerId}:${parties.sellerId}`,
+        view,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not complete exchange");
     } finally {
@@ -436,7 +448,9 @@ export function MessagesPage() {
   const isSeller = Boolean(user && active && user.id === active.sellerId);
   const canAgree =
     isSeller && Boolean(parties) && status !== "Reserved" && status !== "Completed";
-  const canComplete = Boolean(parties) && status === "Reserved";
+  const canComplete =
+    Boolean(parties) &&
+    canManuallyCompleteTransaction(status, txn?.amountNgn, txn?.paidAt);
 
   return (
     <div className="page-shell page-shell--msgs">
@@ -552,7 +566,15 @@ export function MessagesPage() {
                 </div>
               </div>
 
-              {status === "Reserved" ? (
+              {status === "Reserved" &&
+              txn?.amountNgn &&
+              txn.amountNgn > 0 &&
+              !txn.paidAt ? (
+                <div className="msgs-pay-hint">
+                  Payment is outstanding. Complete payment through Paystack before marking this
+                  exchange completed.
+                </div>
+              ) : status === "Reserved" ? (
                 <div className="msgs-pay-hint">
                   Reserved — complete payment securely via the integrated Paystack checkout on the listing page, or confirm and mark completed upon physical handover.
                 </div>
@@ -560,12 +582,12 @@ export function MessagesPage() {
 
               <div className="msgs-body" ref={msgsBodyRef}>
                 <div className="msgs-day">CONVERSATION</div>
-                {msgs.length === 0 ? (
+                {visibleMsgs.length === 0 ? (
                   <div className="thread-preview" style={{ padding: "12px 16px" }}>
                     Say hello — ask if the material is still available or propose a pickup.
                   </div>
                 ) : null}
-                {msgs.map((m, i) => (
+                {visibleMsgs.map((m, i) => (
                   <div
                     key={m.id || `${m.createdAt ?? m.time}-${i}-${m.imageUrl ?? m.text.slice(0, 8)}`}
                     className={m.me ? "msg-row msg-row--me" : "msg-row"}

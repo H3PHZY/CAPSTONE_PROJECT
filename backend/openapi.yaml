@@ -227,6 +227,103 @@ paths:
                 type: object
                 additionalProperties: {}
           description: ''
+  /api/disputes/:
+    get:
+      operationId: disputes_list
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - disputes
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedDisputeList'
+          description: ''
+    post:
+      operationId: disputes_create
+      tags:
+      - disputes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DisputeRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/DisputeRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/DisputeRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dispute'
+          description: ''
+  /api/disputes/{id}/:
+    get:
+      operationId: disputes_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        description: A unique integer value identifying this dispute.
+        required: true
+      tags:
+      - disputes
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dispute'
+          description: ''
+  /api/health/:
+    get:
+      operationId: health_retrieve
+      tags:
+      - health
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/impact/:
     get:
       operationId: impact_retrieve
@@ -450,6 +547,41 @@ paths:
               schema:
                 $ref: '#/components/schemas/Listing'
           description: ''
+  /api/listings/{id}/publish/:
+    post:
+      operationId: listings_publish_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this listing.
+        required: true
+      tags:
+      - listings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListingRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ListingRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ListingRequest'
+        required: true
+      security:
+      - jwtAuth: []
+      - cookieAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Listing'
+          description: ''
   /api/listings/mine/:
     get:
       operationId: listings_mine_retrieve
@@ -567,7 +699,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: A UUID string identifying this listing.
+        description: A UUID string identifying this message.
         required: true
       tags:
       - messages
@@ -581,91 +713,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Message'
           description: ''
-    put:
-      operationId: messages_update
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this listing.
-        required: true
-      tags:
-      - messages
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MessageRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/MessageRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/MessageRequest'
-        required: true
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Message'
-          description: ''
-    patch:
-      operationId: messages_partial_update
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this listing.
-        required: true
-      tags:
-      - messages
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PatchedMessageRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/PatchedMessageRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/PatchedMessageRequest'
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Message'
-          description: ''
-    delete:
-      operationId: messages_destroy
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this listing.
-        required: true
-      tags:
-      - messages
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      responses:
-        '204':
-          description: No response body
   /api/messages/inbox/:
     get:
       operationId: messages_inbox_retrieve
@@ -758,6 +805,35 @@ paths:
               schema:
                 $ref: '#/components/schemas/PaystackVerifyResponse'
           description: ''
+  /api/pay/webhook/:
+    post:
+      operationId: pay_webhook_create
+      tags:
+      - pay
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: {}
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: {}
+          multipart/form-data:
+            schema:
+              type: object
+              additionalProperties: {}
+      security:
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
   /api/transactions/:
     get:
       operationId: transactions_list
@@ -792,31 +868,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/PaginatedTransactionList'
           description: ''
-    post:
-      operationId: transactions_create
-      tags:
-      - transactions
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Transaction'
-          description: ''
   /api/transactions/{id}/:
     get:
       operationId: transactions_retrieve
@@ -826,7 +877,7 @@ paths:
         schema:
           type: string
           format: uuid
-        description: A UUID string identifying this listing.
+        description: A UUID string identifying this transaction.
         required: true
       tags:
       - transactions
@@ -840,90 +891,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Transaction'
           description: ''
-    put:
-      operationId: transactions_update
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this listing.
-        required: true
-      tags:
-      - transactions
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Transaction'
-          description: ''
-    patch:
-      operationId: transactions_partial_update
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this listing.
-        required: true
-      tags:
-      - transactions
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PatchedTransactionRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/PatchedTransactionRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/PatchedTransactionRequest'
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Transaction'
-          description: ''
-    delete:
-      operationId: transactions_destroy
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this listing.
-        required: true
-      tags:
-      - transactions
-      security:
-      - jwtAuth: []
-      - cookieAuth: []
-      responses:
-        '204':
-          description: No response body
   /api/transactions/mark_agreed/:
     post:
       operationId: transactions_mark_agreed_create
@@ -932,17 +899,6 @@ paths:
         Uses database-level row locking (select_for_update) to prevent race conditions.
       tags:
       - transactions
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -959,17 +915,6 @@ paths:
       description: Marks a reserved exchange as completed with atomic locking.
       tags:
       - transactions
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/TransactionRequest'
       security:
       - jwtAuth: []
       - cookieAuth: []
@@ -990,7 +935,7 @@ components:
           format: uuid
           readOnly: true
         predicted_material:
-          $ref: '#/components/schemas/MaterialEnum'
+          $ref: '#/components/schemas/MaterialCategoryEnum'
         confidence:
           type: string
           format: decimal
@@ -1001,7 +946,7 @@ components:
         overridden:
           type: boolean
         final_material:
-          $ref: '#/components/schemas/MaterialEnum'
+          $ref: '#/components/schemas/MaterialCategoryEnum'
         model_id:
           type: string
           nullable: true
@@ -1023,7 +968,7 @@ components:
       type: object
       properties:
         predicted_material:
-          $ref: '#/components/schemas/MaterialEnum'
+          $ref: '#/components/schemas/MaterialCategoryEnum'
         confidence:
           type: string
           format: decimal
@@ -1031,7 +976,7 @@ components:
         overridden:
           type: boolean
         final_material:
-          $ref: '#/components/schemas/MaterialEnum'
+          $ref: '#/components/schemas/MaterialCategoryEnum'
         model_id:
           type: string
           nullable: true
@@ -1061,6 +1006,66 @@ components:
           type: string
       required:
       - detail
+    Dispute:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        transaction_id:
+          type: string
+          format: uuid
+        raised_by_id:
+          type: string
+          readOnly: true
+        reason:
+          type: string
+        status:
+          allOf:
+          - $ref: '#/components/schemas/DisputeStatusEnum'
+          readOnly: true
+        resolution_note:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - id
+      - raised_by_id
+      - reason
+      - resolution_note
+      - status
+      - transaction_id
+      - updated_at
+    DisputeRequest:
+      type: object
+      properties:
+        transaction_id:
+          type: string
+          format: uuid
+        reason:
+          type: string
+          minLength: 1
+      required:
+      - reason
+      - transaction_id
+    DisputeStatusEnum:
+      enum:
+      - Open
+      - Resolved
+      - Refunded
+      type: string
+      description: |-
+        * `Open` - Open
+        * `Resolved` - Resolved
+        * `Refunded` - Refunded
     Listing:
       type: object
       properties:
@@ -1084,7 +1089,7 @@ components:
           type: string
           maxLength: 255
         material:
-          $ref: '#/components/schemas/MaterialEnum'
+          $ref: '#/components/schemas/MaterialCategoryEnum'
         weight_kg:
           type: string
           format: decimal
@@ -1095,7 +1100,9 @@ components:
           pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
           nullable: true
         status:
-          $ref: '#/components/schemas/Status09eEnum'
+          allOf:
+          - $ref: '#/components/schemas/ListingStatusEnum'
+          readOnly: true
         photo:
           type: string
           format: uri
@@ -1173,6 +1180,7 @@ components:
       - seller_cluster
       - seller_id
       - seller_name
+      - status
       - title
       - updated_at
       - verified
@@ -1189,7 +1197,7 @@ components:
           type: string
           maxLength: 255
         material:
-          $ref: '#/components/schemas/MaterialEnum'
+          $ref: '#/components/schemas/MaterialCategoryEnum'
         weight_kg:
           type: string
           format: decimal
@@ -1200,7 +1208,7 @@ components:
           pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
           nullable: true
         status:
-          $ref: '#/components/schemas/Status09eEnum'
+          $ref: '#/components/schemas/ListingStatusEnum'
         photo:
           type: string
           format: uri
@@ -1233,7 +1241,7 @@ components:
           minimum: -180
           nullable: true
         predicted_material:
-          $ref: '#/components/schemas/MaterialEnum'
+          $ref: '#/components/schemas/MaterialCategoryEnum'
         confidence:
           type: string
           format: decimal
@@ -1259,7 +1267,7 @@ components:
           minLength: 1
           maxLength: 255
         material:
-          $ref: '#/components/schemas/MaterialEnum'
+          $ref: '#/components/schemas/MaterialCategoryEnum'
         weight_kg:
           type: string
           format: decimal
@@ -1270,7 +1278,7 @@ components:
           pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
           nullable: true
         status:
-          $ref: '#/components/schemas/Status09eEnum'
+          $ref: '#/components/schemas/ListingStatusEnum'
         photo:
           type: string
           format: binary
@@ -1304,7 +1312,7 @@ components:
           minimum: -180
           nullable: true
         predicted_material:
-          $ref: '#/components/schemas/MaterialEnum'
+          $ref: '#/components/schemas/MaterialCategoryEnum'
         confidence:
           type: string
           format: decimal
@@ -1317,6 +1325,10 @@ components:
           type: string
           default: hf-endpoint
         raw_labels: {}
+        is_draft:
+          type: boolean
+          writeOnly: true
+          default: false
       required:
       - material
       - title
@@ -1329,7 +1341,7 @@ components:
           minLength: 1
           maxLength: 255
         material:
-          $ref: '#/components/schemas/MaterialEnum'
+          $ref: '#/components/schemas/MaterialCategoryEnum'
         weight_kg:
           type: string
           format: decimal
@@ -1339,8 +1351,6 @@ components:
           format: decimal
           pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
           nullable: true
-        status:
-          $ref: '#/components/schemas/Status09eEnum'
         photo:
           type: string
           format: binary
@@ -1362,6 +1372,18 @@ components:
       - material
       - title
       - weight_kg
+    ListingStatusEnum:
+      enum:
+      - Draft
+      - Live
+      - Reserved
+      - Sold
+      type: string
+      description: |-
+        * `Draft` - Draft
+        * `Live` - Live
+        * `Reserved` - Reserved
+        * `Sold` - Sold
     LoginRequestRequest:
       type: object
       properties:
@@ -1377,7 +1399,7 @@ components:
       required:
       - email
       - password
-    MaterialEnum:
+    MaterialCategoryEnum:
       enum:
       - Plastic
       - Glass
@@ -1507,6 +1529,29 @@ components:
       - body
       - listing
       - recipient
+    PaginatedDisputeList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Dispute'
     PaginatedListingList:
       type: object
       required:
@@ -1610,7 +1655,7 @@ components:
           minLength: 1
           maxLength: 255
         material:
-          $ref: '#/components/schemas/MaterialEnum'
+          $ref: '#/components/schemas/MaterialCategoryEnum'
         weight_kg:
           type: string
           format: decimal
@@ -1620,8 +1665,6 @@ components:
           format: decimal
           pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
           nullable: true
-        status:
-          $ref: '#/components/schemas/Status09eEnum'
         photo:
           type: string
           format: binary
@@ -1638,37 +1681,6 @@ components:
         zone:
           type: string
           minLength: 1
-          maxLength: 100
-    PatchedMessageRequest:
-      type: object
-      properties:
-        listing:
-          type: string
-          format: uuid
-        recipient:
-          type: integer
-        body:
-          type: string
-          minLength: 1
-        reply_to:
-          type: string
-          format: uuid
-          nullable: true
-        image_url:
-          type: string
-          nullable: true
-          maxLength: 1000
-        attachment:
-          type: string
-          format: binary
-          nullable: true
-        attachment_name:
-          type: string
-          nullable: true
-          maxLength: 255
-        attachment_mime:
-          type: string
-          nullable: true
           maxLength: 100
     PatchedProfileRequest:
       type: object
@@ -1722,23 +1734,6 @@ components:
           format: double
           maximum: 180
           minimum: -180
-          nullable: true
-    PatchedTransactionRequest:
-      type: object
-      properties:
-        status:
-          $ref: '#/components/schemas/TransactionStatusEnum'
-        payment_ref:
-          type: string
-          nullable: true
-          maxLength: 255
-        paid_at:
-          type: string
-          format: date-time
-          nullable: true
-        completed_at:
-          type: string
-          format: date-time
           nullable: true
     PaystackInitializeRequest:
       type: object
@@ -1833,6 +1828,11 @@ components:
         address:
           type: string
           maxLength: 500
+        date_of_birth:
+          type: string
+          format: date
+          readOnly: true
+          nullable: true
         sells:
           type: boolean
         buys:
@@ -1882,6 +1882,7 @@ components:
           readOnly: true
       required:
       - created_at
+      - date_of_birth
       - display_avatar_url
       - updated_at
       - verified
@@ -1896,6 +1897,9 @@ components:
           type: string
           writeOnly: true
           minLength: 8
+        date_of_birth:
+          type: string
+          format: date
         business_name:
           type: string
           default: ''
@@ -1919,20 +1923,9 @@ components:
           type: boolean
           default: false
       required:
+      - date_of_birth
       - email
       - password
-    Status09eEnum:
-      enum:
-      - Draft
-      - Live
-      - Reserved
-      - Sold
-      type: string
-      description: |-
-        * `Draft` - Draft
-        * `Live` - Live
-        * `Reserved` - Reserved
-        * `Sold` - Sold
     TokenRefresh:
       type: object
       properties:
@@ -1978,6 +1971,14 @@ components:
           format: decimal
           pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
           readOnly: true
+        amount_ngn:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,12}(?:\.\d{0,2})?$
+          readOnly: true
+        currency:
+          type: string
+          readOnly: true
         buyer_id:
           type: integer
           readOnly: true
@@ -1991,18 +1992,22 @@ components:
           type: string
           readOnly: true
         status:
-          $ref: '#/components/schemas/TransactionStatusEnum'
+          allOf:
+          - $ref: '#/components/schemas/TransactionStatusEnum'
+          readOnly: true
         payment_ref:
           type: string
+          readOnly: true
           nullable: true
-          maxLength: 255
         paid_at:
           type: string
           format: date-time
+          readOnly: true
           nullable: true
         completed_at:
           type: string
           format: date-time
+          readOnly: true
           nullable: true
         co2e_kg:
           type: integer
@@ -2017,36 +2022,25 @@ components:
           format: date-time
           readOnly: true
       required:
+      - amount_ngn
       - buyer_id
       - co2e_kg
+      - completed_at
       - counterparty_id
       - counterparty_name
       - created_at
+      - currency
       - id
       - listing_id
       - listing_material
       - listing_price
       - listing_title
       - listing_weight
+      - paid_at
+      - payment_ref
       - seller_id
+      - status
       - updated_at
-    TransactionRequest:
-      type: object
-      properties:
-        status:
-          $ref: '#/components/schemas/TransactionStatusEnum'
-        payment_ref:
-          type: string
-          nullable: true
-          maxLength: 255
-        paid_at:
-          type: string
-          format: date-time
-          nullable: true
-        completed_at:
-          type: string
-          format: date-time
-          nullable: true
     TransactionStatusEnum:
       enum:
       - Interest

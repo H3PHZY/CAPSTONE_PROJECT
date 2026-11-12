@@ -4641,3 +4641,11 @@ a.pipeline-item:hover {
 .txn-detail-actions {
   margin-top: 18px;
 }
+
+.api-wakeup-notice {
+  padding: 8px 20px;
+  background: var(--ink);
+  color: var(--bg-soft);
+  text-align: center;
+  font-size: 13px;
+}

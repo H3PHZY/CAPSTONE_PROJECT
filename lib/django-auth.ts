@@ -1,8 +1,25 @@
 // API base URL helper + authenticated fetch utility + token management
 // for the EcoLoop Django REST backend.
+import { retryOnceOnNetworkFailure } from "@/lib/network-retry";
 
-export const API =
-  process.env.NEXT_PUBLIC_DJANGO_API_URL ?? "http://127.0.0.1:8000/api";
+export function getApiBaseUrl(
+  configuredUrl: string | undefined,
+  environment: string
+) {
+  if (!configuredUrl && environment === "production") {
+    throw new Error(
+      "NEXT_PUBLIC_DJANGO_API_URL must be set for production builds."
+    );
+  }
+  return configuredUrl ?? "http://127.0.0.1:8000/api";
+}
+
+export const API = getApiBaseUrl(
+  process.env.NEXT_PUBLIC_DJANGO_API_URL,
+  process.env.NODE_ENV
+);
+export const API_WAKEUP_EVENT = "ecoloop:api-wakeup";
+export const SESSION_EXPIRED_EVENT = "ecoloop:session-expired";
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -27,6 +44,17 @@ export function clearTokens() {
 }
 
 let refreshInFlight: Promise<string | null> | null = null;
+let wakeupRequestCount = 0;
+
+function setApiWaking(active: boolean) {
+  if (typeof window === "undefined") return;
+  wakeupRequestCount = Math.max(0, wakeupRequestCount + (active ? 1 : -1));
+  window.dispatchEvent(
+    new CustomEvent(API_WAKEUP_EVENT, {
+      detail: { active: wakeupRequestCount > 0 },
+    })
+  );
+}
 
 async function refreshAccessToken(): Promise<string | null> {
   const refresh = getRefreshToken();
@@ -88,7 +116,25 @@ async function fetchWithToken(
 }
 
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const first = await fetchWithToken(path, init, getToken());
+  const method = (init?.method ?? "GET").toUpperCase();
+  const request = () => fetchWithToken(path, init, getToken());
+  let first: Response;
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
+    let retrying = false;
+    try {
+      first = await retryOnceOnNetworkFailure(
+        request,
+        () => {
+          retrying = true;
+          setApiWaking(true);
+        }
+      );
+    } finally {
+      if (retrying) setApiWaking(false);
+    }
+  } else {
+    first = await request();
+  }
   if (first.status !== 401 || path === "/auth/refresh/") return first;
 
   const token = await refreshAccessToken();
@@ -107,7 +153,12 @@ export class DjangoApiError extends Error {
 }
 
 export async function handleError(res: Response): Promise<never> {
-  if (res.status === 401) clearTokens();
+  if (res.status === 401) {
+    clearTokens();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    }
+  }
 
   let data: unknown;
   try {
@@ -119,6 +170,8 @@ export async function handleError(res: Response): Promise<never> {
   const message =
     res.status === 401
       ? "Session expired, please log in again"
+      : res.status === 503
+        ? "EcoLoop is temporarily unavailable. The service may be waking up; please try again shortly."
       : getErrorMessage(data) || `Request failed (${res.status})`;
   throw new DjangoApiError(message, res.status);
 }

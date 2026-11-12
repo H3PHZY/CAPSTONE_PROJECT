@@ -27,6 +27,11 @@ class TransactionStatus(models.TextChoices):
     COMPLETED = 'Completed', _('Completed')
     CANCELLED = 'Cancelled', _('Cancelled')
 
+class DisputeStatus(models.TextChoices):
+    OPEN = 'Open', _('Open')
+    RESOLVED = 'Resolved', _('Resolved')
+    REFUNDED = 'Refunded', _('Refunded')
+
 # ─── 1. Profile Model ─────────────────────────────────────────────────────────
 
 class Profile(models.Model):
@@ -41,6 +46,7 @@ class Profile(models.Model):
     cluster = models.CharField(max_length=100, default='Ogba')
     zone = models.CharField(max_length=100, null=True, blank=True)
     address = models.CharField(max_length=500, default='', blank=True)
+    date_of_birth = models.DateField(null=True, blank=True)
     sells = models.BooleanField(default=False)
     buys = models.BooleanField(default=False)
     carbon_impact = models.BooleanField(default=False)
@@ -56,6 +62,16 @@ class Profile(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=['cluster'], name='profile_cluster_idx'),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(lat__isnull=True) | models.Q(lat__gte=-90, lat__lte=90),
+                name='profile_lat_valid',
+            ),
+            models.CheckConstraint(
+                check=models.Q(lng__isnull=True) | models.Q(lng__gte=-180, lng__lte=180),
+                name='profile_lng_valid',
+            ),
         ]
 
     def __str__(self):
@@ -123,6 +139,21 @@ class Listing(models.Model):
             models.Index(fields=['material'], name='listing_material_idx'),
             models.Index(fields=['status', 'material'], name='listing_live_mat_idx'),
         ]
+        constraints = [
+            models.CheckConstraint(check=models.Q(weight_kg__gt=0), name='listing_weight_positive'),
+            models.CheckConstraint(
+                check=models.Q(price_ngn__isnull=True) | models.Q(price_ngn__gt=0),
+                name='listing_price_positive_or_null',
+            ),
+            models.CheckConstraint(
+                check=models.Q(lat__isnull=True) | models.Q(lat__gte=-90, lat__lte=90),
+                name='listing_lat_valid',
+            ),
+            models.CheckConstraint(
+                check=models.Q(lng__isnull=True) | models.Q(lng__gte=-180, lng__lte=180),
+                name='listing_lng_valid',
+            ),
+        ]
 
     def __str__(self):
         return f"{self.title} ({self.material}, {self.weight_kg}kg)"
@@ -182,6 +213,14 @@ class Classification(models.Model):
     def __str__(self):
         return f"Classification for {self.listing.title} -> {self.final_material} ({self.confidence * 100:.1f}%)"
 
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(confidence__gte=0, confidence__lte=1),
+                name='classification_confidence_valid',
+            ),
+        ]
+
 # ─── 4. Transaction Model ─────────────────────────────────────────────────────
 
 class Transaction(models.Model):
@@ -209,6 +248,8 @@ class Transaction(models.Model):
     payment_ref = models.CharField(max_length=255, null=True, blank=True, unique=True)
     paid_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    amount_ngn = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=3, default='NGN')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -222,7 +263,26 @@ class Transaction(models.Model):
             models.UniqueConstraint(
                 fields=['listing', 'buyer', 'seller'],
                 name='unique_listing_parties'
-            )
+            ),
+            models.UniqueConstraint(
+                fields=['listing'],
+                condition=models.Q(status__in=[TransactionStatus.RESERVED, TransactionStatus.COMPLETED]),
+                name='one_active_deal_per_listing',
+            ),
+            models.CheckConstraint(
+                check=models.Q(amount_ngn__isnull=True) | models.Q(amount_ngn__gt=0),
+                name='transaction_amount_positive_or_null',
+            ),
+            models.CheckConstraint(
+                check=models.Q(paid_at__isnull=True) | (
+                    models.Q(payment_ref__isnull=False) & ~models.Q(payment_ref='')
+                ),
+                name='paid_transaction_has_reference',
+            ),
+            models.CheckConstraint(
+                check=~models.Q(status=TransactionStatus.COMPLETED) | models.Q(completed_at__isnull=False),
+                name='completed_transaction_has_timestamp',
+            ),
         ]
         indexes = [
             models.Index(fields=['listing'], name='txn_listing_idx'),
@@ -261,6 +321,10 @@ class CarbonRecord(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=['transaction'], name='carbon_txn_idx'),
+        ]
+        constraints = [
+            models.CheckConstraint(check=models.Q(co2e_kg__gte=0), name='carbon_co2e_nonnegative'),
+            models.CheckConstraint(check=models.Q(weight_kg__gt=0), name='carbon_weight_positive'),
         ]
 
     def __str__(self):
@@ -314,3 +378,37 @@ class Message(models.Model):
 
     def __str__(self):
         return f"Msg from {self.sender.id} to {self.recipient.id}: {self.body[:30]}"
+
+
+class Dispute(models.Model):
+    transaction = models.ForeignKey(
+        Transaction,
+        on_delete=models.CASCADE,
+        related_name='disputes',
+    )
+    raised_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.RESTRICT,
+        related_name='raised_disputes',
+    )
+    reason = models.TextField()
+    status = models.CharField(
+        max_length=20,
+        choices=DisputeStatus.choices,
+        default=DisputeStatus.OPEN,
+    )
+    resolution_note = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(status__in=DisputeStatus.values),
+                name='dispute_status_valid',
+            ),
+        ]
+
+    def __str__(self):
+        return f"Dispute for transaction {self.transaction_id} ({self.status})"

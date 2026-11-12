@@ -1,4 +1,4 @@
-import type { ClassificationRow, ListingRow, MaterialCategory, ProfileRow } from "@/lib/database.types";
+import type { ClassificationRow, ListingRow, MaterialCategory, ProfileRow } from "@/lib/models";
 import { DjangoApiError } from "@/lib/django-auth";
 import { djangoListings, type DjangoListing } from "@/lib/django-api";
 import type { Listing, ListingStatus, MyListing } from "@/lib/types";
@@ -13,6 +13,10 @@ const ZONE_COORDS: Record<string, { lat: number; lng: number }> = {
 };
 
 const VIEWER_DEFAULT = ZONE_COORDS.Ogba;
+
+export function getZoneCoordinates(zone: string) {
+  return ZONE_COORDS[zone] ?? VIEWER_DEFAULT;
+}
 
 type ListingJoin = ListingRow & {
   distance?: number;
@@ -56,8 +60,7 @@ function coordsFor(listing: Pick<ListingRow, "lat" | "lng" | "zone">) {
   if (listing.lat != null && listing.lng != null) {
     return { lat: listing.lat, lng: listing.lng };
   }
-  const zone = listing.zone ?? "";
-  return ZONE_COORDS[zone] ?? VIEWER_DEFAULT;
+  return getZoneCoordinates(listing.zone ?? "");
 }
 
 function classificationOf(row: ListingJoin) {
@@ -211,9 +214,13 @@ export async function fetchListingById(
   }
 }
 
-export async function fetchMyListings(_sellerId: string) {
+export async function fetchMyListings() {
   const rows = await djangoListings.fetchMine();
   return rows.map((row) => toMyListing(fromDjangoListing(row)));
+}
+
+export async function publishOwnedListing(listingId: string) {
+  return djangoListings.publish(listingId);
 }
 
 export type CreateListingInput = {
@@ -231,6 +238,7 @@ export type CreateListingInput = {
   confidence: number;
   overridden: boolean;
   modelId?: string;
+  isDraft?: boolean;
 };
 
 export async function createLiveListing(input: CreateListingInput) {
@@ -248,6 +256,7 @@ export async function createLiveListing(input: CreateListingInput) {
     confidence: input.confidence,
     overridden: input.overridden,
     model_id: input.modelId || "hf-endpoint",
+    is_draft: input.isDraft ?? false,
   });
   const listing = await djangoListings.fetchById(created.id);
   return fromDjangoListing(listing);
@@ -279,7 +288,6 @@ export type UpdateListingInput = {
 
 export async function updateOwnedListing(
   listingId: string,
-  _sellerId: string,
   input: UpdateListingInput
 ) {
   const cover = input.photoUrl?.trim() || null;
