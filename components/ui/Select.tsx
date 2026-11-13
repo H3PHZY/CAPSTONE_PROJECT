@@ -11,6 +11,7 @@ type SelectProps = {
   onChange: (value: string) => void;
   "aria-label"?: string;
   className?: string;
+  disabled?: boolean;
 };
 
 function normalize(options: SelectOption[] | string[]): SelectOption[] {
@@ -27,6 +28,7 @@ export function Select({
   onChange,
   "aria-label": ariaLabel,
   className = "",
+  disabled = false,
 }: SelectProps) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<MenuPos | null>(null);
@@ -139,6 +141,7 @@ export function Select({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={listId}
+        disabled={disabled}
         onClick={() => setOpen((v) => !v)}
       >
         <span className="select-trigger-label">{selected?.label}</span>

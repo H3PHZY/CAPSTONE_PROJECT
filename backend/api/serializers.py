@@ -1,7 +1,10 @@
 from decimal import Decimal
 from datetime import date
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Q
 from rest_framework import serializers
 from api.models import (
     Profile,
@@ -16,6 +19,7 @@ from api.models import (
     MaterialCategory,
 )
 from api.utils import haversine_km, calculate_co2_kg, get_coords_for_zone
+from api.validators import validate_uploaded_image
 
 User = get_user_model()
 
@@ -51,6 +55,13 @@ class ProfileSerializer(serializers.ModelSerializer):
         read_only_fields = ['verified', 'date_of_birth', 'created_at', 'updated_at']
 
     def validate(self, attrs):
+        if attrs.get('avatar') is not None:
+            attrs['avatar'] = validate_uploaded_image(attrs['avatar'])
+        avatar_url = attrs.get('avatar_url')
+        if avatar_url and not self._is_safe_image_url(avatar_url):
+            raise serializers.ValidationError(
+                {'avatar_url': 'Avatar URLs must use HTTPS or this API’s media path.'}
+            )
         lat_provided = 'lat' in attrs
         lng_provided = 'lng' in attrs
         if lat_provided != lng_provided:
@@ -76,6 +87,12 @@ class ProfileSerializer(serializers.ModelSerializer):
                 {'address': 'A saved address must have resolved latitude and longitude.'}
             )
         return attrs
+
+    def _is_safe_image_url(self, value):
+        if value.startswith('https://') or value.startswith('/media/'):
+            return True
+        request = self.context.get('request')
+        return bool(request and value.startswith(request.build_absolute_uri('/media/')))
 
 class UserSerializer(serializers.ModelSerializer):
     profile = ProfileSerializer(read_only=True)
@@ -110,6 +127,15 @@ class SignupSerializer(serializers.Serializer):
         if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError("An account with this email already exists.")
         return value.lower()
+
+    def validate_password(self, value):
+        email = self.initial_data.get('email', '')
+        candidate = User(username=email, email=email)
+        try:
+            validate_password(value, candidate)
+        except ValidationError as error:
+            raise serializers.ValidationError(error.messages) from error
+        return value
 
     def create(self, validated_data):
         email = validated_data['email']
@@ -159,6 +185,14 @@ class ClassificationSerializer(serializers.ModelSerializer):
 # ─── Listing Serializers ─────────────────────────────────────────────────────
 
 class ListingSerializer(serializers.ModelSerializer):
+    weight_kg = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
+    price_ngn = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        min_value=Decimal('0.01'),
+        allow_null=True,
+        required=False,
+    )
     seller_id = serializers.CharField(source='seller.id', read_only=True)
     seller_name = serializers.SerializerMethodField()
     seller_cluster = serializers.SerializerMethodField()
@@ -207,7 +241,28 @@ class ListingSerializer(serializers.ModelSerializer):
 
     def get_seller_name(self, obj) -> str:
         profile = getattr(obj.seller, 'profile', None)
-        return (profile.business_name if profile and profile.business_name else obj.seller.email) or "EcoLoop Seller"
+        return (profile.business_name if profile and profile.business_name else None) or "EcoLoop Seller"
+
+    def validate_photo(self, value):
+        return validate_uploaded_image(value) if value else value
+
+    def validate_photo_url(self, value):
+        if value and not self._is_safe_image_url(value):
+            raise serializers.ValidationError('Photo URLs must use HTTPS or this API’s media path.')
+        return value
+
+    def validate_photo_urls(self, value):
+        if not isinstance(value, list) or len(value) > 6:
+            raise serializers.ValidationError('Provide at most 6 photo URLs.')
+        if any(not isinstance(url, str) or not self._is_safe_image_url(url) for url in value):
+            raise serializers.ValidationError('Photo URLs must use HTTPS or this API’s media path.')
+        return value
+
+    def _is_safe_image_url(self, value):
+        if value.startswith('https://') or value.startswith('/media/'):
+            return True
+        request = self.context.get('request')
+        return bool(request and value.startswith(request.build_absolute_uri('/media/')))
 
     def get_seller_cluster(self, obj) -> str:
         profile = getattr(obj.seller, 'profile', None)
@@ -270,6 +325,14 @@ class ListingSerializer(serializers.ModelSerializer):
         return haversine_km(viewer_lat, viewer_lon, listing_lat, listing_lon)
 
 class ListingCreateSerializer(serializers.ModelSerializer):
+    weight_kg = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
+    price_ngn = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        min_value=Decimal('0.01'),
+        allow_null=True,
+        required=False,
+    )
     lat = serializers.FloatField(required=False, allow_null=True, min_value=-90, max_value=90)
     lng = serializers.FloatField(required=False, allow_null=True, min_value=-180, max_value=180)
     predicted_material = serializers.ChoiceField(choices=MaterialCategory.choices, required=False)
@@ -304,6 +367,20 @@ class ListingCreateSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
+        if attrs.get('photo') is not None:
+            attrs['photo'] = validate_uploaded_image(attrs['photo'])
+        photo_url = attrs.get('photo_url')
+        if photo_url and not self._is_safe_image_url(photo_url):
+            raise serializers.ValidationError(
+                {'photo_url': 'Photo URLs must use HTTPS or this API’s media path.'}
+            )
+        photo_urls = attrs.get('photo_urls', [])
+        if not isinstance(photo_urls, list) or len(photo_urls) > 6:
+            raise serializers.ValidationError({'photo_urls': 'Provide at most 6 photo URLs.'})
+        if any(not isinstance(url, str) or not self._is_safe_image_url(url) for url in photo_urls):
+            raise serializers.ValidationError(
+                {'photo_urls': 'Photo URLs must use HTTPS or this API’s media path.'}
+            )
         lat_provided = 'lat' in attrs
         lng_provided = 'lng' in attrs
         if lat_provided != lng_provided:
@@ -311,6 +388,12 @@ class ListingCreateSerializer(serializers.ModelSerializer):
                 {'lat': 'Latitude and longitude must be provided together.'}
             )
         return attrs
+
+    def _is_safe_image_url(self, value):
+        if value.startswith('https://') or value.startswith('/media/'):
+            return True
+        request = self.context.get('request')
+        return bool(request and value.startswith(request.build_absolute_uri('/media/')))
 
     def create(self, validated_data):
         pred_mat = validated_data.pop('predicted_material', validated_data.get('material'))
@@ -395,7 +478,7 @@ class TransactionSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         target_user = obj.seller if request and request.user.id == obj.buyer_id else obj.buyer
         profile = getattr(target_user, 'profile', None)
-        return (profile.business_name if profile and profile.business_name else target_user.email) or "EcoLoop User"
+        return (profile.business_name if profile and profile.business_name else None) or "EcoLoop User"
 
     def get_co2e_kg(self, obj) -> int | None:
         rec = getattr(obj, 'carbon_record', None)
@@ -457,6 +540,7 @@ class DisputeSerializer(serializers.ModelSerializer):
 # ─── Message Serializers ─────────────────────────────────────────────────────
 
 class MessageSerializer(serializers.ModelSerializer):
+    body = serializers.CharField(max_length=5000, allow_blank=True, trim_whitespace=False)
     me = serializers.SerializerMethodField()
     sender_name = serializers.SerializerMethodField()
     sender_avatar_url = serializers.SerializerMethodField()
@@ -483,7 +567,7 @@ class MessageSerializer(serializers.ModelSerializer):
             'sender_avatar_url',
             'time',
         ]
-        read_only_fields = ['id', 'sender', 'created_at']
+        read_only_fields = ['id', 'sender', 'attachment', 'created_at']
 
     def get_me(self, obj) -> bool:
         request = self.context.get('request')
@@ -491,7 +575,7 @@ class MessageSerializer(serializers.ModelSerializer):
 
     def get_sender_name(self, obj) -> str:
         profile = getattr(obj.sender, 'profile', None)
-        return (profile.business_name if profile and profile.business_name else obj.sender.email) or "User"
+        return (profile.business_name if profile and profile.business_name else None) or "EcoLoop User"
 
     def get_sender_avatar_url(self, obj) -> str | None:
         profile = getattr(obj.sender, 'profile', None)
@@ -501,7 +585,69 @@ class MessageSerializer(serializers.ModelSerializer):
         return obj.created_at.strftime('%H:%M')
 
     def get_reply_text(self, obj) -> str | None:
-        return obj.reply_to.body if obj.reply_to else None
+        if not obj.reply_to:
+            return None
+        if (
+            obj.reply_to.listing_id != obj.listing_id
+            or {obj.reply_to.sender_id, obj.reply_to.recipient_id}
+            != {obj.sender_id, obj.recipient_id}
+        ):
+            return None
+        return obj.reply_to.body
+
+    def validate_image_url(self, value):
+        request = self.context.get('request')
+        api_media_prefix = request.build_absolute_uri('/media/') if request else ''
+        if value and not (
+            value.startswith(('https://', '/media/'))
+            or (api_media_prefix and value.startswith(api_media_prefix))
+        ):
+            raise serializers.ValidationError('Image attachments must use HTTPS or the media path.')
+        return value
+
+    def validate(self, attrs):
+        request = self.context['request']
+        sender = request.user
+        recipient = attrs.get('recipient', getattr(self.instance, 'recipient', None))
+        listing = attrs.get('listing', getattr(self.instance, 'listing', None))
+        reply_to = attrs.get('reply_to', getattr(self.instance, 'reply_to', None))
+
+        if self.instance is not None:
+            raise serializers.ValidationError('Sent messages cannot be edited.')
+        if not listing or not recipient or sender.pk == recipient.pk:
+            raise serializers.ValidationError('A listing and a different recipient are required.')
+        existing_thread = Message.objects.filter(
+            listing=listing,
+        ).filter(
+            Q(sender=sender, recipient=recipient) | Q(sender=recipient, recipient=sender)
+        ).exists()
+        if recipient.pk != listing.seller_id and not existing_thread:
+            raise serializers.ValidationError(
+                {'recipient': 'The recipient must be the listing seller or an existing thread participant.'}
+            )
+        if recipient.pk == listing.seller_id and sender.pk != listing.seller_id:
+            is_reserved_for_sender = listing.transactions.filter(
+                buyer=sender,
+                status=TransactionStatus.RESERVED,
+            ).exists()
+            if (
+                listing.status != ListingStatus.LIVE
+                and not is_reserved_for_sender
+                and not existing_thread
+            ):
+                raise serializers.ValidationError(
+                    {'listing': 'New conversations can only start for available listings.'}
+                )
+        if reply_to and (
+            reply_to.listing_id != listing.pk
+            or {reply_to.sender_id, reply_to.recipient_id} != {sender.pk, recipient.pk}
+        ):
+            raise serializers.ValidationError(
+                {'reply_to': 'The referenced message must belong to this conversation.'}
+            )
+        if attrs.get('attachment') is not None:
+            attrs['attachment'] = validate_uploaded_image(attrs['attachment'])
+        return attrs
 
 # ─── Carbon Record Serializer ────────────────────────────────────────────────
 
@@ -554,6 +700,7 @@ class MediaUploadResponseSerializer(serializers.Serializer):
 class PaystackInitializeResponseSerializer(serializers.Serializer):
     ok = serializers.BooleanField()
     reference = serializers.CharField()
+    transactionId = serializers.UUIDField()
     listingId = serializers.UUIDField()
     listingTitle = serializers.CharField()
     amountNgn = serializers.DecimalField(max_digits=12, decimal_places=2)

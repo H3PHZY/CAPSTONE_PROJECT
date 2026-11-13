@@ -8,6 +8,7 @@ import { djangoRequest } from "@/lib/django-api";
 import { handleError } from "@/lib/django-auth";
 import { PaystackButton } from "@/components/marketplace/PaystackButton";
 import {
+  cancelPaymentHold,
   initializePayment,
   openPaystack,
   verifyAndFulfil,
@@ -18,6 +19,7 @@ vi.mock("@/lib/django-api", () => ({
 }));
 
 vi.mock("@/lib/paystack", () => ({
+  cancelPaymentHold: vi.fn(),
   initializePayment: vi.fn(),
   openPaystack: vi.fn(),
   verifyAndFulfil: vi.fn(),
@@ -59,6 +61,7 @@ describe("Paystack checkout", () => {
       amountKobo: 5200000,
       amountNgn: 52000,
       reference: "ECO-listing-buyer",
+      transactionId: "transaction-1",
       listingTitle: "Copper offcuts",
       publicKey: "pk_test",
     });
@@ -102,6 +105,7 @@ describe("Paystack checkout", () => {
       amountKobo: 5200000,
       amountNgn: 52000,
       reference: "ECO-listing-buyer",
+      transactionId: "transaction-1",
       listingTitle: "Copper offcuts",
       publicKey: "pk_test",
     });
@@ -125,6 +129,40 @@ describe("Paystack checkout", () => {
     expect((await screen.findByRole("alert")).textContent).toContain(
       "Payment reference has already been used."
     );
+  });
+
+  it("releases the reservation when the buyer closes checkout", async () => {
+    vi.mocked(initializePayment).mockResolvedValue({
+      ok: true,
+      amountKobo: 5200000,
+      amountNgn: 52000,
+      reference: "ECO-listing-buyer",
+      transactionId: "transaction-1",
+      listingTitle: "Copper offcuts",
+      publicKey: "pk_test",
+    });
+    vi.mocked(openPaystack).mockRejectedValue(
+      new Error("Payment window was closed before completion.")
+    );
+    vi.mocked(cancelPaymentHold).mockResolvedValue(undefined);
+
+    render(
+      <PaystackButton
+        buyerEmail="buyer@example.test"
+        buyerId="buyer-1"
+        listingId="listing-1"
+        priceFormatted="52,000"
+        listingTitle="Copper offcuts"
+        onPurchaseComplete={vi.fn()}
+      />
+    );
+
+    const button = screen.getByRole("button", { name: /purchase/i });
+    await userEvent.click(button);
+    await waitFor(() => {
+      expect(cancelPaymentHold).toHaveBeenCalledWith("transaction-1");
+    });
+    expect(await screen.findByRole("button", { name: /purchase/i })).toBeTruthy();
   });
 });
 

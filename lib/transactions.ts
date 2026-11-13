@@ -1,4 +1,5 @@
 import type { MaterialCategory, TransactionStatus } from "@/lib/models";
+import { DjangoApiError } from "@/lib/django-auth";
 import { djangoTransactions, type DjangoTransaction } from "@/lib/django-api";
 import type { Txn } from "@/lib/types";
 
@@ -48,15 +49,8 @@ export async function findTransactionForPair(
   buyerId: string,
   sellerId: string
 ): Promise<DjangoTransaction | null> {
-  const rows = await djangoTransactions.fetchMine();
-  return (
-    rows.find(
-      (row) =>
-        row.listing_id === listingId &&
-        row.buyer_id === buyerId &&
-        row.seller_id === sellerId
-    ) ?? null
-  );
+  const rows = await djangoTransactions.fetchPair(listingId, buyerId, sellerId);
+  return rows[0] ?? null;
 }
 
 export async function getPairTransactionView(
@@ -154,7 +148,12 @@ export function formatTransactionAmount(
 }
 
 export async function fetchTransactionById(id: string) {
-  const rows = await djangoTransactions.fetchMine();
-  const row = rows.find((transaction) => transaction.id === id);
-  return row ? mapTxn(row) : null;
+  try {
+    return mapTxn(await djangoTransactions.fetchById(id));
+  } catch (error) {
+    if (error instanceof DjangoApiError && error.status === 404) {
+      return null;
+    }
+    throw error;
+  }
 }

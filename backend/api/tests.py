@@ -15,6 +15,8 @@ from django.db import IntegrityError, transaction as db_transaction
 from django.utils import timezone
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.contrib.auth.tokens import default_token_generator
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken
 from django.utils.http import urlsafe_base64_encode
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -25,6 +27,7 @@ from api.models import (
     Transaction,
     CarbonRecord,
     Message,
+    PaymentAttempt,
     MaterialCategory,
     Dispute,
     DisputeStatus,
@@ -356,6 +359,7 @@ class EcoLoopAPITestCase(TestCase):
             price_ngn=Decimal("25000.00"),
             status=ListingStatus.LIVE,
         )
+        old_time = timezone.now()
         txn = Transaction.objects.create(
             listing=listing,
             buyer=self.buyer,
@@ -363,9 +367,14 @@ class EcoLoopAPITestCase(TestCase):
             status=TransactionStatus.RESERVED,
             payment_ref="old-reference",
             amount_ngn=Decimal("25000.00"),
+            hold_started_at=old_time - timedelta(minutes=31),
+            hold_expires_at=old_time,
         )
-        old_time = timezone.now()
-        Transaction.objects.filter(pk=txn.pk).update(updated_at=old_time)
+        PaymentAttempt.objects.create(
+            transaction=txn,
+            reference="old-reference",
+            amount_ngn=Decimal("25000.00"),
+        )
 
         self.client.force_authenticate(user=self.buyer)
         with patch("api.views.timezone.now", return_value=old_time + timedelta(minutes=31)):
@@ -374,13 +383,23 @@ class EcoLoopAPITestCase(TestCase):
         txn.refresh_from_db()
         listing.refresh_from_db()
         self.assertEqual(txn.status, TransactionStatus.INTEREST)
-        self.assertIsNone(txn.payment_ref)
+        self.assertEqual(txn.payment_ref, "old-reference")
+        self.assertEqual(
+            PaymentAttempt.objects.get(reference="old-reference").status,
+            PaymentAttempt.Status.EXPIRED,
+        )
         self.assertEqual(listing.status, ListingStatus.LIVE)
 
         Transaction.objects.filter(pk=txn.pk).update(
             status=TransactionStatus.RESERVED,
             payment_ref="second-stale-reference",
-            updated_at=old_time,
+            hold_started_at=old_time - timedelta(minutes=31),
+            hold_expires_at=old_time,
+        )
+        PaymentAttempt.objects.create(
+            transaction=txn,
+            reference="second-stale-reference",
+            amount_ngn=Decimal("25000.00"),
         )
         Listing.objects.filter(pk=listing.pk).update(status=ListingStatus.RESERVED)
         with patch("api.views.timezone.now", return_value=old_time + timedelta(minutes=31)):
@@ -388,7 +407,7 @@ class EcoLoopAPITestCase(TestCase):
         txn.refresh_from_db()
         listing.refresh_from_db()
         self.assertEqual(txn.status, TransactionStatus.INTEREST)
-        self.assertIsNone(txn.payment_ref)
+        self.assertEqual(txn.payment_ref, "second-stale-reference")
         self.assertEqual(listing.status, ListingStatus.LIVE)
 
     @override_settings(PAYMENT_HOLD_MINUTES=30)
@@ -406,6 +425,7 @@ class EcoLoopAPITestCase(TestCase):
             email="oldbuyer@test.ng",
             password="testpassword123",
         )
+        old_time = timezone.now()
         txn = Transaction.objects.create(
             listing=listing,
             buyer=old_buyer,
@@ -413,9 +433,14 @@ class EcoLoopAPITestCase(TestCase):
             status=TransactionStatus.RESERVED,
             payment_ref="old-reference",
             amount_ngn=Decimal("25000.00"),
+            hold_started_at=old_time - timedelta(minutes=31),
+            hold_expires_at=old_time,
         )
-        old_time = timezone.now()
-        Transaction.objects.filter(pk=txn.pk).update(updated_at=old_time)
+        PaymentAttempt.objects.create(
+            transaction=txn,
+            reference="old-reference",
+            amount_ngn=Decimal("25000.00"),
+        )
 
         self.client.force_authenticate(user=self.buyer)
         with patch("api.views.timezone.now", return_value=old_time + timedelta(minutes=31)):
@@ -427,6 +452,7 @@ class EcoLoopAPITestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         txn.refresh_from_db()
         self.assertEqual(txn.status, TransactionStatus.INTEREST)
+        self.assertEqual(txn.payment_ref, "old-reference")
         self.assertNotEqual(txn.payment_ref, response.data["reference"])
 
     @override_settings(PAYMENT_HOLD_MINUTES=30)
@@ -444,6 +470,7 @@ class EcoLoopAPITestCase(TestCase):
             email="manualoldbuyer@test.ng",
             password="testpassword123",
         )
+        old_time = timezone.now()
         old_txn = Transaction.objects.create(
             listing=listing,
             buyer=old_buyer,
@@ -451,9 +478,14 @@ class EcoLoopAPITestCase(TestCase):
             status=TransactionStatus.RESERVED,
             payment_ref="manual-old-reference",
             amount_ngn=Decimal("25000.00"),
+            hold_started_at=old_time - timedelta(minutes=31),
+            hold_expires_at=old_time,
         )
-        old_time = timezone.now()
-        Transaction.objects.filter(pk=old_txn.pk).update(updated_at=old_time)
+        PaymentAttempt.objects.create(
+            transaction=old_txn,
+            reference="manual-old-reference",
+            amount_ngn=Decimal("25000.00"),
+        )
 
         self.client.force_authenticate(user=self.seller)
         with patch("api.views.timezone.now", return_value=old_time + timedelta(minutes=31)):
@@ -539,6 +571,44 @@ class EcoLoopAPITestCase(TestCase):
         self.assertEqual(self.seller.profile.business_name, "Apex Metalworks Ltd")
         self.assertEqual(self.buyer.profile.business_name, "Changed buyer name")
 
+    def test_credential_updates_require_current_password_and_rotate_tokens(self):
+        old_refresh = RefreshToken.for_user(self.buyer)
+        self.client.force_authenticate(user=self.buyer)
+
+        rejected = self.client.patch(
+            "/api/auth/me/",
+            {"password": "another-strong-password-123"},
+            format="json",
+        )
+        self.assertEqual(rejected.status_code, status.HTTP_400_BAD_REQUEST)
+        self.buyer.refresh_from_db()
+        self.assertTrue(self.buyer.check_password("testpassword123"))
+
+        accepted = self.client.patch(
+            "/api/auth/me/",
+            {
+                "password": "another-strong-password-123",
+                "current_password": "testpassword123",
+            },
+            format="json",
+        )
+        self.assertEqual(accepted.status_code, status.HTTP_200_OK)
+        self.assertIn("tokens", accepted.data)
+        self.assertTrue(
+            BlacklistedToken.objects.filter(token__jti=old_refresh["jti"]).exists()
+        )
+        self.buyer.refresh_from_db()
+        self.assertTrue(self.buyer.check_password("another-strong-password-123"))
+
+    def test_logout_blacklists_all_refresh_tokens(self):
+        refresh = RefreshToken.for_user(self.buyer)
+        self.client.force_authenticate(user=self.buyer)
+        response = self.client.post("/api/auth/logout/", {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_205_RESET_CONTENT)
+        self.assertTrue(
+            BlacklistedToken.objects.filter(token__jti=refresh["jti"]).exists()
+        )
+
     def test_message_participants_cannot_mutate_sent_messages(self):
         listing = Listing.objects.create(
             seller=self.seller,
@@ -565,6 +635,98 @@ class EcoLoopAPITestCase(TestCase):
                 self.assertEqual(response.status_code, status.HTTP_405_METHOD_NOT_ALLOWED)
         message.refresh_from_db()
         self.assertEqual(message.body, "Original body")
+
+    def test_message_creation_rejects_nonparticipants_and_cross_thread_replies(self):
+        listing = Listing.objects.create(
+            seller=self.seller,
+            title="Message scope",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            status=ListingStatus.LIVE,
+        )
+        other_listing = Listing.objects.create(
+            seller=self.seller,
+            title="Other listing",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            status=ListingStatus.LIVE,
+        )
+        other = User.objects.create_user(
+            username="message-other@test.ng",
+            email="message-other@test.ng",
+            password="testpassword123",
+        )
+        reply = Message.objects.create(
+            listing=other_listing,
+            sender=self.buyer,
+            recipient=self.seller,
+            body="A different thread",
+        )
+        self.client.force_authenticate(user=self.buyer)
+        invalid_recipient = self.client.post(
+            "/api/messages/",
+            {
+                "listing": str(listing.pk),
+                "recipient": str(other.pk),
+                "body": "Hello",
+            },
+            format="json",
+        )
+        self.assertEqual(invalid_recipient.status_code, status.HTTP_400_BAD_REQUEST)
+        invalid_reply = self.client.post(
+            "/api/messages/",
+            {
+                "listing": str(listing.pk),
+                "recipient": str(self.seller.pk),
+                "body": "Reply",
+                "reply_to": str(reply.pk),
+            },
+            format="json",
+        )
+        self.assertEqual(invalid_reply.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_inbox_returns_only_the_latest_message_per_thread(self):
+        listing = Listing.objects.create(
+            seller=self.seller,
+            title="Inbox listing",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            status=ListingStatus.LIVE,
+        )
+        other_buyer = User.objects.create_user(
+            username="inbox-other@test.ng",
+            email="inbox-other@test.ng",
+            password="testpassword123",
+        )
+        older = Message.objects.create(
+            listing=listing,
+            sender=self.buyer,
+            recipient=self.seller,
+            body="Older buyer message",
+        )
+        latest = Message.objects.create(
+            listing=listing,
+            sender=self.seller,
+            recipient=self.buyer,
+            body="Latest seller reply",
+        )
+        Message.objects.filter(pk=older.pk).update(
+            created_at=timezone.now() - timedelta(minutes=2)
+        )
+        Message.objects.filter(pk=latest.pk).update(created_at=timezone.now())
+        Message.objects.create(
+            listing=listing,
+            sender=other_buyer,
+            recipient=self.seller,
+            body="Another buyer thread",
+        )
+
+        self.client.force_authenticate(user=self.seller)
+        response = self.client.get("/api/messages/inbox/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 2)
+        first_thread = next(row for row in response.data if row["otherUserId"] == str(self.buyer.pk))
+        self.assertEqual(first_thread["preview"], "Latest seller reply")
 
     def test_open_dispute_can_only_be_raised_by_buyer_on_paid_transaction(self):
         listing = Listing.objects.create(
@@ -658,6 +820,7 @@ class EcoLoopAPITestCase(TestCase):
         self.assertEqual(response.data, {"status": "ok"})
 
     def test_password_reset_request_and_confirmation(self):
+        refresh = RefreshToken.for_user(self.buyer)
         with patch("api.views.send_mail") as send_mail:
             response = self.client.post(
                 "/api/auth/password-reset/",
@@ -677,6 +840,9 @@ class EcoLoopAPITestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.buyer.refresh_from_db()
         self.assertTrue(self.buyer.check_password("new-strong-password-123"))
+        self.assertTrue(
+            BlacklistedToken.objects.filter(token__jti=refresh["jti"]).exists()
+        )
 
     def test_classification_endpoint_returns_provider_fallback(self):
         fallback = {
@@ -685,8 +851,8 @@ class EcoLoopAPITestCase(TestCase):
             "lowConfidence": True,
             "modelId": "manual-fallback",
         }
-        remote_image = Mock(ok=True, content=b"image")
-        with patch("api.views.requests.get", return_value=remote_image):
+        self.client.force_authenticate(user=self.buyer)
+        with patch("api.views.fetch_public_image", return_value=b"image"):
             with patch("api.views.classify_image_bytes", return_value=fallback):
                 response = self.client.post(
                     "/api/classify/",
@@ -696,9 +862,30 @@ class EcoLoopAPITestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data, fallback)
 
+    def test_classification_requires_auth_and_rejects_private_image_hosts(self):
+        response = self.client.post(
+            "/api/classify/",
+            {"imageUrl": "https://127.0.0.1/private.png"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        self.client.force_authenticate(user=self.buyer)
+        with patch(
+            "api.safe_fetch.socket.getaddrinfo",
+            return_value=[(2, 1, 6, "", ("127.0.0.1", 443))],
+        ):
+            response = self.client.post(
+                "/api/classify/",
+                {"imageUrl": "https://private.example.test/image.png"},
+                format="json",
+            )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("public address", response.data["error"])
+
     def test_media_upload_rejects_oversized_unsupported_and_fake_images(self):
         self.client.force_authenticate(user=self.seller)
-        oversized = SimpleUploadedFile("large.jpg", b"x" * (8 * 1024 * 1024 + 1), "image/jpeg")
+        oversized = SimpleUploadedFile("large.jpg", b"x" * (5 * 1024 * 1024 + 1), "image/jpeg")
         response = self.client.post(
             "/api/media/upload/",
             {"category": "listing-photo", "file": oversized},
@@ -858,9 +1045,174 @@ class EcoLoopAPITestCase(TestCase):
         )
         self.assertEqual(transaction.status, TransactionStatus.RESERVED)
         self.assertEqual(transaction.payment_ref, response.data["reference"])
+        self.assertEqual(response.data["transactionId"], str(transaction.pk))
         self.assertEqual(response.data["amountKobo"], 2_500_000)
+        self.assertIsNotNone(transaction.hold_started_at)
+        self.assertIsNotNone(transaction.hold_expires_at)
+        self.assertEqual(PaymentAttempt.objects.filter(transaction=transaction).count(), 1)
+
+        repeated = self.client.post(
+            "/api/pay/initialize/",
+            {"listingId": str(listing.id)},
+            format="json",
+        )
+        self.assertEqual(repeated.status_code, status.HTTP_200_OK)
+        self.assertEqual(repeated.data["reference"], response.data["reference"])
+        self.assertEqual(PaymentAttempt.objects.filter(transaction=transaction).count(), 1)
         listing.refresh_from_db()
         self.assertEqual(listing.status, ListingStatus.RESERVED)
+
+    def test_buyer_can_cancel_unpaid_checkout_and_release_listing(self):
+        listing = Listing.objects.create(
+            seller=self.seller,
+            title="Cancel checkout",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            price_ngn=Decimal("25000.00"),
+            status=ListingStatus.LIVE,
+        )
+        self.client.force_authenticate(user=self.buyer)
+        initialized = self.client.post(
+            "/api/pay/initialize/",
+            {"listingId": str(listing.pk)},
+            format="json",
+        )
+        self.assertEqual(initialized.status_code, status.HTTP_200_OK)
+
+        response = self.client.post(
+            f"/api/transactions/{initialized.data['transactionId']}/cancel/",
+            {},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        listing.refresh_from_db()
+        txn = Transaction.objects.get(pk=initialized.data["transactionId"])
+        attempt = PaymentAttempt.objects.get(reference=initialized.data["reference"])
+        self.assertEqual(txn.status, TransactionStatus.INTEREST)
+        self.assertEqual(txn.payment_ref, initialized.data["reference"])
+        self.assertEqual(attempt.status, PaymentAttempt.Status.CANCELLED)
+        self.assertEqual(listing.status, ListingStatus.LIVE)
+        self.client.force_authenticate(user=self.seller)
+        deleted = self.client.delete(f"/api/listings/{listing.pk}/")
+        self.assertEqual(deleted.status_code, status.HTTP_409_CONFLICT)
+        self.assertTrue(Listing.objects.filter(pk=listing.pk).exists())
+
+    @override_settings(PAYSTACK_SECRET_KEY="sk_test_late_webhook")
+    def test_late_payment_after_expiry_fulfils_if_listing_is_available(self):
+        listing = Listing.objects.create(
+            seller=self.seller,
+            title="Late payment",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            price_ngn=Decimal("25000.00"),
+            status=ListingStatus.LIVE,
+        )
+        self.client.force_authenticate(user=self.buyer)
+        initialized = self.client.post(
+            "/api/pay/initialize/",
+            {"listingId": str(listing.pk)},
+            format="json",
+        )
+        reference = initialized.data["reference"]
+        txn = Transaction.objects.get(pk=initialized.data["transactionId"])
+        Transaction.objects.filter(pk=txn.pk).update(
+            hold_expires_at=timezone.now() - timedelta(minutes=1)
+        )
+        self.client.get("/api/listings/")
+        txn.refresh_from_db()
+        listing.refresh_from_db()
+        self.assertEqual(txn.status, TransactionStatus.INTEREST)
+        self.assertEqual(listing.status, ListingStatus.LIVE)
+
+        event = {
+            "event": "charge.success",
+            "data": {
+                "reference": reference,
+                "status": "success",
+                "amount": 2_500_000,
+                "currency": "NGN",
+            },
+        }
+        with patch("api.views.verify_paystack_transaction") as verify:
+            response = self.post_paystack_webhook(event, "sk_test_late_webhook")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        txn.refresh_from_db()
+        listing.refresh_from_db()
+        self.assertEqual(txn.status, TransactionStatus.COMPLETED)
+        self.assertEqual(txn.payment_ref, reference)
+        self.assertEqual(listing.status, ListingStatus.SOLD)
+        self.assertEqual(
+            PaymentAttempt.objects.get(reference=reference).status,
+            PaymentAttempt.Status.PAID,
+        )
+        verify.assert_called_once_with(reference, Decimal("25000.00"))
+        confirmed = self.client.post(
+            "/api/pay/verify/",
+            {"listingId": str(listing.pk), "reference": reference},
+            format="json",
+        )
+        self.assertEqual(confirmed.status_code, status.HTTP_200_OK)
+        self.assertTrue(confirmed.data["alreadyProcessed"])
+
+    @override_settings(PAYSTACK_SECRET_KEY="sk_test_late_webhook")
+    def test_late_payment_for_a_re_reserved_listing_is_audited_for_reconciliation(self):
+        listing = Listing.objects.create(
+            seller=self.seller,
+            title="Competing late payment",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            price_ngn=Decimal("25000.00"),
+            status=ListingStatus.LIVE,
+        )
+        self.client.force_authenticate(user=self.buyer)
+        first = self.client.post(
+            "/api/pay/initialize/",
+            {"listingId": str(listing.pk)},
+            format="json",
+        )
+        first_txn = Transaction.objects.get(pk=first.data["transactionId"])
+        Transaction.objects.filter(pk=first_txn.pk).update(
+            hold_expires_at=timezone.now() - timedelta(minutes=1)
+        )
+        self.client.get("/api/listings/")
+
+        second_buyer = User.objects.create_user(
+            username="second-late-buyer@test.ng",
+            email="second-late-buyer@test.ng",
+            password="testpassword123",
+        )
+        second_client = APIClient()
+        second_client.force_authenticate(user=second_buyer)
+        second = second_client.post(
+            "/api/pay/initialize/",
+            {"listingId": str(listing.pk)},
+            format="json",
+        )
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+
+        event = {
+            "event": "charge.success",
+            "data": {
+                "reference": first.data["reference"],
+                "status": "success",
+                "amount": 2_500_000,
+                "currency": "NGN",
+            },
+        }
+        with patch("api.views.verify_paystack_transaction"):
+            response = self.post_paystack_webhook(event, "sk_test_late_webhook")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["reconciliation_required"])
+        first_txn.refresh_from_db()
+        listing.refresh_from_db()
+        self.assertEqual(first_txn.status, TransactionStatus.INTEREST)
+        self.assertIsNone(first_txn.paid_at)
+        self.assertEqual(listing.status, ListingStatus.RESERVED)
+        self.assertEqual(
+            PaymentAttempt.objects.get(reference=first.data["reference"]).status,
+            PaymentAttempt.Status.RECONCILIATION,
+        )
+        self.assertTrue(first_txn.disputes.filter(status=DisputeStatus.OPEN).exists())
 
     @override_settings(PAYSTACK_SECRET_KEY="sk_test_payment")
     def test_paystack_verification_completes_only_initialized_payment_once(self):
@@ -904,6 +1256,10 @@ class EcoLoopAPITestCase(TestCase):
         self.assertEqual(transaction.amount_ngn, Decimal("25000.00"))
         self.assertEqual(transaction.currency, "NGN")
         self.assertIsNotNone(transaction.paid_at)
+        self.assertEqual(
+            PaymentAttempt.objects.get(reference=reference).status,
+            PaymentAttempt.Status.PAID,
+        )
         self.assertTrue(CarbonRecord.objects.filter(transaction=transaction).exists())
         listing.refresh_from_db()
         self.assertEqual(listing.status, ListingStatus.SOLD)
@@ -913,7 +1269,8 @@ class EcoLoopAPITestCase(TestCase):
             {"listingId": str(listing.id), "reference": reference},
             format="json",
         )
-        self.assertEqual(replay.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(replay.status_code, status.HTTP_200_OK)
+        self.assertTrue(replay.data["alreadyProcessed"])
         verify.assert_called_once()
 
     @override_settings(PAYSTACK_SECRET_KEY="sk_test_payment")
@@ -986,15 +1343,29 @@ class EcoLoopAPITestCase(TestCase):
             amount_ngn=Decimal("25000.00"),
             currency="NGN",
         )
+        attempt = PaymentAttempt.objects.create(
+            transaction=txn,
+            reference=txn.payment_ref,
+            amount_ngn=Decimal("25000.00"),
+        )
         event = {
             "event": "charge.success",
-            "data": {"reference": txn.payment_ref},
+            "data": {
+                "reference": txn.payment_ref,
+                "status": "success",
+                "amount": 2_500_000,
+                "currency": "NGN",
+            },
         }
         with patch("api.views.verify_paystack_transaction") as verify:
             response = self.post_paystack_webhook(event, "sk_test_webhook")
 
             self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertEqual(response.data, {"received": True, "listingId": str(listing.pk)})
+            self.assertEqual(response.data, {
+                "received": True,
+                "listingId": str(listing.pk),
+                "already_processed": False,
+            })
             txn.refresh_from_db()
             listing.refresh_from_db()
             self.assertEqual(txn.status, TransactionStatus.COMPLETED)
@@ -1008,11 +1379,17 @@ class EcoLoopAPITestCase(TestCase):
             replay = self.post_paystack_webhook(event, "sk_test_webhook")
 
         self.assertEqual(replay.status_code, status.HTTP_200_OK)
-        self.assertEqual(replay.data, {"received": True, "already_processed": True})
+        self.assertEqual(replay.data, {
+            "received": True,
+            "listingId": str(listing.pk),
+            "already_processed": True,
+        })
         txn.refresh_from_db()
         self.assertEqual(txn.completed_at, completed_at)
         self.assertEqual(txn.paid_at, paid_at)
         self.assertEqual(CarbonRecord.objects.filter(transaction=txn).count(), 1)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.status, PaymentAttempt.Status.PAID)
         verify.assert_called_once_with(txn.payment_ref, Decimal("25000.00"))
 
     @override_settings(PAYSTACK_SECRET_KEY="sk_test_webhook")
@@ -1034,9 +1411,19 @@ class EcoLoopAPITestCase(TestCase):
             amount_ngn=Decimal("25000.00"),
             currency="NGN",
         )
+        PaymentAttempt.objects.create(
+            transaction=txn,
+            reference=txn.payment_ref,
+            amount_ngn=Decimal("25000.00"),
+        )
         event = {
             "event": "charge.success",
-            "data": {"reference": txn.payment_ref},
+            "data": {
+                "reference": txn.payment_ref,
+                "status": "success",
+                "amount": 2_500_000,
+                "currency": "NGN",
+            },
         }
         with patch("api.views.verify_paystack_transaction") as verify:
             response = self.post_paystack_webhook(
@@ -1052,6 +1439,47 @@ class EcoLoopAPITestCase(TestCase):
         self.assertIsNone(txn.paid_at)
         self.assertEqual(listing.status, ListingStatus.RESERVED)
         self.assertFalse(CarbonRecord.objects.filter(transaction=txn).exists())
+        verify.assert_not_called()
+
+    @override_settings(PAYSTACK_SECRET_KEY="sk_test_webhook")
+    def test_paystack_webhook_rejects_mismatched_amount_before_verification(self):
+        listing = Listing.objects.create(
+            seller=self.seller,
+            title="Webhook amount mismatch",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            price_ngn=Decimal("25000.00"),
+            status=ListingStatus.RESERVED,
+        )
+        txn = Transaction.objects.create(
+            listing=listing,
+            buyer=self.buyer,
+            seller=self.seller,
+            status=TransactionStatus.RESERVED,
+            payment_ref="ECO-WEBHOOK-AMOUNT",
+            amount_ngn=Decimal("25000.00"),
+            currency="NGN",
+        )
+        PaymentAttempt.objects.create(
+            transaction=txn,
+            reference=txn.payment_ref,
+            amount_ngn=Decimal("25000.00"),
+        )
+        event = {
+            "event": "charge.success",
+            "data": {
+                "reference": txn.payment_ref,
+                "status": "success",
+                "amount": 2_500_001,
+                "currency": "NGN",
+            },
+        }
+        with patch("api.views.verify_paystack_transaction") as verify:
+            response = self.post_paystack_webhook(event, "sk_test_webhook")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        txn.refresh_from_db()
+        self.assertEqual(txn.status, TransactionStatus.RESERVED)
+        self.assertIsNone(txn.paid_at)
         verify.assert_not_called()
 
     def test_haversine_distance_calculation(self):

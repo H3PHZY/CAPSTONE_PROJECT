@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from datetime import timedelta
 from django.core.exceptions import ImproperlyConfigured
@@ -13,12 +14,16 @@ try:
 except ImportError:
     pass
 
-SECRET_KEY = os.environ.get(
-    'SECRET_KEY',
-    'django-insecure-ecoloop-capstone-dev-key-change-in-production-12345678'
-)
+DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
+SECRET_KEY = os.environ.get('SECRET_KEY')
+if not SECRET_KEY:
+    if 'test' in sys.argv:
+        SECRET_KEY = 'test-secret-key-for-ecoloop-tests-only'
+    elif DEBUG:
+        SECRET_KEY = 'django-insecure-ecoloop-local-development-only'
+    else:
+        raise ImproperlyConfigured('Set SECRET_KEY in the environment.')
 
-DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
 if not DEBUG and SECRET_KEY.startswith('django-insecure-'):
     raise ImproperlyConfigured('Set a strong SECRET_KEY when DEBUG is disabled.')
 
@@ -45,6 +50,7 @@ INSTALLED_APPS = [
     'cloudinary',
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'django_filters',
     'drf_spectacular',
@@ -209,7 +215,10 @@ REST_FRAMEWORK = {
         'signup': '5/hour',
         'password_reset': '3/hour',
         'pay': '10/minute',
+        'classify': '30/hour',
+        'webhook': '120/minute',
     },
+    'NUM_PROXIES': int(os.environ.get('NUM_PROXIES', '1')),
 }
 
 # Spectacular OpenAPI Documentation Settings
@@ -232,7 +241,7 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': False,
+    'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
     'USER_ID_FIELD': 'id',
     'USER_ID_CLAIM': 'user_id',

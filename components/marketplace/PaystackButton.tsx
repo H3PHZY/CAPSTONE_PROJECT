@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { openPaystack, verifyAndFulfil, initializePayment } from "@/lib/paystack";
+import {
+  cancelPaymentHold,
+  openPaystack,
+  verifyAndFulfil,
+  initializePayment,
+} from "@/lib/paystack";
 
 type PaystackButtonProps = {
   /** Buyer's email — passed directly to Paystack modal. */
@@ -39,9 +44,10 @@ export function PaystackButton({
     setErrorMsg(null);
 
     let ref: string;
+    let transactionId: string | null = null;
     try {
-      // Supervisor Upgrade #1: Obtain server-generated structured reference & verify lot availability
       const init = await initializePayment(listingId);
+      transactionId = init.transactionId;
       ref = await openPaystack({
         email: buyerEmail,
         amountKobo: init.amountKobo,
@@ -51,8 +57,20 @@ export function PaystackButton({
         metadata: { listingId, buyerId },
       });
     } catch (err) {
-      // User closed modal — reset silently
       const msg = err instanceof Error ? err.message : "Payment cancelled";
+      if (transactionId) {
+        try {
+          await cancelPaymentHold(transactionId);
+        } catch (cancelError) {
+          setErrorMsg(
+            cancelError instanceof Error
+              ? cancelError.message
+              : "Could not release the payment reservation."
+          );
+          setPhase("error");
+          return;
+        }
+      }
       if (msg.toLowerCase().includes("closed")) {
         setPhase("idle");
         return;

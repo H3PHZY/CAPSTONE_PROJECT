@@ -1,31 +1,32 @@
 from decimal import Decimal
-from pathlib import PurePath
 import hashlib
 import hmac
 import json
 import secrets
 import uuid
-import requests
-from PIL import Image, UnidentifiedImageError
+from pathlib import PurePath
 from django.conf import settings
 from django.contrib.auth import get_user_model, authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
-from django.db import transaction as db_transaction
-from django.db.models import Q, Sum, Count, Case, When, IntegerField
+from django.db import IntegrityError, transaction as db_transaction
+from django.db.models import F, Q, Sum, Count, Case, When, IntegerField, Window
+from django.db.models.functions import RowNumber
 from datetime import timedelta
 from django.core.files.storage import default_storage, storages
 from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
-from rest_framework import mixins, viewsets, status, views
+from rest_framework import mixins, serializers, viewsets, status, views
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied, ValidationError as DRFValidationError
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
 from api.models import (
     Profile,
@@ -38,6 +39,7 @@ from api.models import (
     Message,
     Dispute,
     DisputeStatus,
+    PaymentAttempt,
 )
 from api.serializers import (
     SignupSerializer,
@@ -68,7 +70,14 @@ from api.permissions import (
 )
 from api.classify import classify_image_bytes
 from api.paystack import verify_paystack_transaction
+from api.payments import (
+    PaymentPayloadError,
+    settle_payment_attempt,
+    validate_paystack_success,
+)
+from api.safe_fetch import UnsafeImageUrl, fetch_public_image
 from api.utils import haversine_km, get_coords_for_zone
+from api.validators import validate_uploaded_image
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
 User = get_user_model()
@@ -76,34 +85,55 @@ User = get_user_model()
 
 def expire_stale_payment_holds(now=None):
     now = now or timezone.now()
-    expired_before = now - timedelta(minutes=settings.PAYMENT_HOLD_MINUTES)
     with db_transaction.atomic():
-        expired = list(
-            DealTransaction.objects.select_for_update()
-            .filter(
+        candidates = list(
+            DealTransaction.objects.filter(
                 status=TransactionStatus.RESERVED,
                 payment_ref__isnull=False,
                 paid_at__isnull=True,
-                updated_at__lt=expired_before,
-            )
-            .select_related('listing')
+                hold_expires_at__lte=now,
+            ).order_by('listing_id', 'pk').values_list('pk', 'listing_id')
         )
-        for txn in expired:
+        for txn_id, listing_id in candidates:
+            listing = Listing.objects.select_for_update().filter(pk=listing_id).first()
+            txn = DealTransaction.objects.select_for_update().filter(
+                pk=txn_id,
+                status=TransactionStatus.RESERVED,
+                payment_ref__isnull=False,
+                paid_at__isnull=True,
+                hold_expires_at__lte=now,
+            ).first()
+            if not txn:
+                continue
+            PaymentAttempt.objects.filter(
+                transaction=txn,
+                reference=txn.payment_ref,
+                status=PaymentAttempt.Status.INITIALIZED,
+            ).update(status=PaymentAttempt.Status.EXPIRED)
             txn.status = TransactionStatus.INTEREST
-            txn.payment_ref = None
-            txn.save(update_fields=['status', 'payment_ref', 'updated_at'])
-            listing = Listing.objects.select_for_update().get(pk=txn.listing_id)
-            if (
-                listing.status == ListingStatus.RESERVED
-                and not DealTransaction.objects.filter(
-                    listing_id=listing.pk,
-                    status__in=[TransactionStatus.RESERVED, TransactionStatus.COMPLETED],
-                ).exists()
-            ):
+            txn.hold_started_at = None
+            txn.hold_expires_at = None
+            txn.save(
+                update_fields=[
+                    'status',
+                    'hold_started_at',
+                    'hold_expires_at',
+                    'updated_at',
+                ]
+            )
+            if listing and listing.status == ListingStatus.RESERVED and not DealTransaction.objects.filter(
+                listing_id=listing.pk,
+                status__in=[TransactionStatus.RESERVED, TransactionStatus.COMPLETED],
+            ).exists():
                 Listing.objects.filter(pk=listing.pk).update(
                     status=ListingStatus.LIVE,
                     updated_at=now,
                 )
+
+
+def blacklist_user_refresh_tokens(user):
+    for token in OutstandingToken.objects.filter(user=user):
+        BlacklistedToken.objects.get_or_create(token=token)
 
 
 # ─── 1. Authentication Views ──────────────────────────────────────────────────
@@ -122,7 +152,13 @@ class SignupView(views.APIView):
     def post(self, request):
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        user = serializer.save()
+        try:
+            user = serializer.save()
+        except IntegrityError:
+            return Response(
+                {'error': 'An account with this email already exists.'},
+                status=status.HTTP_409_CONFLICT,
+            )
         refresh = RefreshToken.for_user(user)
         return Response({
             'user': UserSerializer(user).data,
@@ -144,14 +180,10 @@ class LoginView(views.APIView):
         description="Authenticates via email and password, returning JWT access and refresh tokens."
     )
     def post(self, request):
-        email = request.data.get('email', '').strip().lower()
-        password = request.data.get('password', '')
-
-        if not email or not password:
-            return Response(
-                {'error': 'Email and password are required.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        serializer = LoginRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email'].strip().lower()
+        password = serializer.validated_data['password']
 
         user = authenticate(username=email, password=password)
         if not user:
@@ -193,27 +225,97 @@ class MeView(views.APIView):
         description="Partially updates profile metadata, business info, or user email/password."
     )
     def patch(self, request):
-        profile = request.user.profile
-        serializer = ProfileSerializer(profile, data=request.data, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-
-        # Update email if provided
+        user = request.user
         email = request.data.get('email')
-        if email and email.strip().lower() != request.user.email:
-            request.user.email = email.strip().lower()
-            request.user.username = email.strip().lower()
-            request.user.save()
-
-        # Update password if provided
         password = request.data.get('password')
-        if password:
-            if len(password) < 8:
-                return Response({'error': 'Password must be at least 8 characters.'}, status=400)
-            request.user.set_password(password)
-            request.user.save()
+        current_password = request.data.get('current_password')
+        changing_credentials = email is not None or password is not None
 
-        return Response(UserSerializer(request.user).data)
+        if changing_credentials and (
+            not isinstance(current_password, str)
+            or not current_password
+            or not user.check_password(current_password)
+        ):
+            return Response(
+                {'error': 'A valid current_password is required to change account credentials.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        normalized_email = None
+        if email is not None:
+            if not isinstance(email, str):
+                return Response({'error': 'A valid email address is required.'}, status=400)
+            try:
+                normalized_email = serializers.EmailField().run_validation(email).lower()
+            except DRFValidationError as error:
+                return Response({'error': error.detail}, status=400)
+        if normalized_email and User.objects.filter(
+            email__iexact=normalized_email,
+        ).exclude(pk=user.pk).exists():
+            return Response(
+                {'error': 'An account with this email already exists.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if password:
+            if not isinstance(password, str):
+                return Response({'error': 'A valid password is required.'}, status=400)
+            try:
+                validate_password(password, user)
+            except ValidationError as error:
+                return Response(
+                    {'error': ' '.join(error.messages)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        profile_data = request.data.copy()
+        for field in ('email', 'password', 'current_password'):
+            profile_data.pop(field, None)
+
+        profile_serializer = ProfileSerializer(
+            user.profile,
+            data=profile_data,
+            partial=True,
+        )
+        profile_serializer.is_valid(raise_exception=True)
+
+        credentials_changed = changing_credentials
+        try:
+            with db_transaction.atomic():
+                profile_serializer.save()
+                update_fields = []
+                if normalized_email and normalized_email != user.email:
+                    user.email = normalized_email
+                    user.username = normalized_email
+                    update_fields.extend(['email', 'username'])
+                if password:
+                    user.set_password(password)
+                    update_fields.append('password')
+                if update_fields:
+                    user.save(update_fields=update_fields)
+                    blacklist_user_refresh_tokens(user)
+        except IntegrityError:
+            return Response(
+                {'error': 'An account with this email already exists.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        response_data = UserSerializer(user).data
+        if credentials_changed:
+            refresh = RefreshToken.for_user(user)
+            response_data['tokens'] = {
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+            }
+        return Response(response_data)
+
+
+class LogoutView(views.APIView):
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(request=None, responses={205: None}, summary='Logout')
+    def post(self, request):
+        blacklist_user_refresh_tokens(request.user)
+        return Response(status=status.HTTP_205_RESET_CONTENT)
 
 
 class PasswordResetRequestView(views.APIView):
@@ -258,14 +360,11 @@ class PasswordResetConfirmView(views.APIView):
         summary="Confirm a password reset",
     )
     def post(self, request):
-        uid = request.data.get('uid')
-        token = request.data.get('token')
-        password = request.data.get('password')
-        if not uid or not token or not password:
-            return Response(
-                {'error': 'uid, token, and password are required.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        uid = serializer.validated_data['uid']
+        token = serializer.validated_data['token']
+        password = serializer.validated_data['password']
 
         try:
             user_id = force_str(urlsafe_base64_decode(uid))
@@ -286,6 +385,7 @@ class PasswordResetConfirmView(views.APIView):
 
         user.set_password(password)
         user.save(update_fields=['password'])
+        blacklist_user_refresh_tokens(user)
         return Response({'detail': 'Password reset successfully.'})
 
 
@@ -310,7 +410,11 @@ class ListingViewSet(viewsets.ModelViewSet):
         if not user.is_authenticated:
             qs = qs.filter(status=ListingStatus.LIVE)
         elif self.action != 'mine':
-            qs = qs.filter(Q(status=ListingStatus.LIVE) | Q(seller=user))
+            qs = qs.filter(
+                Q(status=ListingStatus.LIVE)
+                | Q(seller=user)
+                | Q(status=ListingStatus.RESERVED, transactions__buyer=user)
+            ).distinct()
 
         # Query Filters
         q = self.request.query_params.get('q')
@@ -383,7 +487,7 @@ class ListingViewSet(viewsets.ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
         # Atomic view count bump
-        Listing.objects.filter(id=instance.id).update(views=instance.views + 1)
+        Listing.objects.filter(id=instance.id).update(views=F('views') + 1)
         instance.views += 1
         serializer = self.get_serializer(instance)
         return Response(serializer.data)
@@ -418,6 +522,15 @@ class ListingViewSet(viewsets.ModelViewSet):
         current_urls = list(listing.photo_urls or [])
 
         for f in files:
+            if listing.status in (ListingStatus.RESERVED, ListingStatus.SOLD):
+                return Response(
+                    {'error': 'Reserved or sold listings cannot be edited.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            try:
+                validate_uploaded_image(f)
+            except DRFValidationError as error:
+                return Response({'error': error.detail}, status=400)
             # In Django, could upload to storage or save file
             listing.photo = f
             listing.save()
@@ -439,6 +552,20 @@ class ListingViewSet(viewsets.ModelViewSet):
         ).delete()
         super().perform_destroy(instance)
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if PaymentAttempt.objects.filter(transaction__listing=instance).exists():
+            return Response(
+                {'error': 'Listings with payment history cannot be deleted.'},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    def perform_update(self, serializer):
+        if serializer.instance.status in (ListingStatus.RESERVED, ListingStatus.SOLD):
+            raise PermissionDenied('Reserved or sold listings cannot be edited.')
+        serializer.save()
+
 # ─── 3. Transaction ViewSet ───────────────────────────────────────────────────
 
 class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
@@ -450,9 +577,21 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
             return DealTransaction.objects.none()
         expire_stale_payment_holds()
         user = self.request.user
-        return DealTransaction.objects.filter(
-            Q(buyer=user) | Q(seller=user)
-        ).select_related('listing', 'buyer__profile', 'seller__profile', 'carbon_record')
+        queryset = DealTransaction.objects.filter(Q(buyer=user) | Q(seller=user))
+        filters = {}
+        for field in ('listing_id', 'buyer_id', 'seller_id'):
+            value = self.request.query_params.get(field)
+            if value:
+                try:
+                    filters[field] = uuid.UUID(value) if field == 'listing_id' else int(value)
+                except (TypeError, ValueError):
+                    return queryset.none()
+        return queryset.filter(**filters).select_related(
+            'listing',
+            'buyer__profile',
+            'seller__profile',
+            'carbon_record',
+        )
 
     @action(detail=False, methods=['post'])
     def mark_agreed(self, request):
@@ -466,6 +605,12 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
         if not listing_id or not buyer_id:
             return Response({'error': 'listing_id and buyer_id are required.'}, status=400)
 
+        try:
+            listing_id = uuid.UUID(str(listing_id))
+            buyer_id = int(buyer_id)
+        except (TypeError, ValueError, AttributeError):
+            return Response({'error': 'listing_id and buyer_id must be valid IDs.'}, status=400)
+
         if str(buyer_id) == str(request.user.id):
             return Response({'error': 'Buyer and seller must be different.'}, status=400)
 
@@ -473,52 +618,101 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
         if not buyer:
             return Response({'error': 'Buyer not found.'}, status=404)
 
-        with db_transaction.atomic():
-            expire_stale_payment_holds()
-            listing = Listing.objects.select_for_update().filter(id=listing_id).first()
-            if not listing:
-                return Response({'error': 'Listing not found.'}, status=404)
+        expire_stale_payment_holds()
+        try:
+            with db_transaction.atomic():
+                listing = Listing.objects.select_for_update().filter(id=listing_id).first()
+                if not listing:
+                    return Response({'error': 'Listing not found.'}, status=404)
 
-            if listing.seller != request.user:
-                return Response({'error': 'Only the seller can mark a deal as agreed.'}, status=403)
+                if listing.seller != request.user:
+                    return Response({'error': 'Only the seller can mark a deal as agreed.'}, status=403)
+                if listing.status != ListingStatus.LIVE:
+                    return Response(
+                        {'error': 'Only live listings can be reserved.'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if listing.price_ngn is None or listing.price_ngn <= 0:
+                    return Response({'error': 'A valid listing price is required.'}, status=400)
 
-            if listing.status == ListingStatus.SOLD:
-                return Response({'error': 'This listing is already sold.'}, status=409)
+                active_deal = DealTransaction.objects.select_for_update().filter(
+                    listing=listing,
+                    status__in=[TransactionStatus.RESERVED, TransactionStatus.COMPLETED],
+                ).first()
+                if active_deal:
+                    return Response(
+                        {'error': 'This listing is already reserved or sold.'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
 
-            # Check if already reserved or completed for another buyer
-            other_hold = DealTransaction.objects.select_for_update().filter(
-                listing=listing,
-                status__in=[TransactionStatus.RESERVED, TransactionStatus.COMPLETED]
-            ).exclude(buyer=buyer).first()
-
-            if other_hold:
-                return Response(
-                    {'error': 'This listing is already reserved for another buyer.'},
-                    status=409
+                txn, _ = DealTransaction.objects.select_for_update().get_or_create(
+                    listing=listing,
+                    buyer=buyer,
+                    seller=request.user,
+                    defaults={
+                        'status': TransactionStatus.RESERVED,
+                        'amount_ngn': listing.price_ngn,
+                        'currency': 'NGN',
+                    },
                 )
-
-            txn, _ = DealTransaction.objects.select_for_update().get_or_create(
-                listing=listing,
-                buyer=buyer,
-                seller=request.user,
-                defaults={
-                    'status': TransactionStatus.RESERVED,
-                    'amount_ngn': listing.price_ngn,
-                    'currency': 'NGN',
-                }
-            )
-
-            if txn.disputes.filter(status=DisputeStatus.OPEN).exists():
-                return Response({'error': 'An open dispute blocks deal status changes.'}, status=409)
-            if txn.status != TransactionStatus.RESERVED:
+                if txn.disputes.filter(status=DisputeStatus.OPEN).exists():
+                    return Response({'error': 'An open dispute blocks deal status changes.'}, status=409)
                 txn.status = TransactionStatus.RESERVED
                 txn.amount_ngn = listing.price_ngn
                 txn.currency = 'NGN'
-                txn.save(update_fields=['status', 'amount_ngn', 'currency', 'updated_at'])
+                txn.hold_started_at = None
+                txn.hold_expires_at = None
+                txn.save(
+                    update_fields=[
+                        'status',
+                        'amount_ngn',
+                        'currency',
+                        'hold_started_at',
+                        'hold_expires_at',
+                        'updated_at',
+                    ]
+                )
+                listing.status = ListingStatus.RESERVED
+                listing.save(update_fields=['status', 'updated_at'])
+        except IntegrityError:
+            return Response(
+                {'error': 'This listing is already reserved or sold.'},
+                status=status.HTTP_409_CONFLICT,
+            )
 
-            listing.status = ListingStatus.RESERVED
-            listing.save(update_fields=['status', 'updated_at'])
+        return Response(TransactionSerializer(txn, context={'request': request}).data)
 
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        txn = self.get_object()
+        if txn.buyer_id != request.user.id:
+            return Response({'error': 'Only the buyer can cancel checkout.'}, status=403)
+        if txn.status != TransactionStatus.RESERVED or txn.paid_at is not None:
+            return Response({'error': 'Only an unpaid reservation can be cancelled.'}, status=409)
+        if txn.disputes.filter(status=DisputeStatus.OPEN).exists():
+            return Response({'error': 'An open dispute blocks deal status changes.'}, status=409)
+
+        with db_transaction.atomic():
+            Listing.objects.select_for_update().get(pk=txn.listing_id)
+            txn = DealTransaction.objects.select_for_update().get(pk=txn.pk)
+            if txn.status != TransactionStatus.RESERVED or txn.paid_at is not None:
+                return Response({'error': 'Only an unpaid reservation can be cancelled.'}, status=409)
+            PaymentAttempt.objects.filter(
+                transaction=txn,
+                reference=txn.payment_ref,
+                status=PaymentAttempt.Status.INITIALIZED,
+            ).update(status=PaymentAttempt.Status.CANCELLED)
+            txn.status = TransactionStatus.INTEREST
+            txn.hold_started_at = None
+            txn.hold_expires_at = None
+            txn.save(
+                update_fields=[
+                    'status',
+                    'hold_started_at',
+                    'hold_expires_at',
+                    'updated_at',
+                ]
+            )
         return Response(TransactionSerializer(txn, context={'request': request}).data)
 
     @action(detail=False, methods=['post'])
@@ -532,8 +726,23 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
         if not listing_id or not buyer_id:
             return Response({'error': 'listing_id and buyer_id are required.'}, status=400)
 
+        try:
+            listing_id = uuid.UUID(str(listing_id))
+            buyer_id = int(buyer_id)
+        except (TypeError, ValueError, AttributeError):
+            return Response({'error': 'listing_id and buyer_id must be valid IDs.'}, status=400)
+
+        txn_id = DealTransaction.objects.filter(
+            listing_id=listing_id,
+            buyer_id=buyer_id,
+        ).values_list('pk', flat=True).first()
+        if not txn_id:
+            return Response({'error': 'Transaction not found.'}, status=404)
+
         with db_transaction.atomic():
+            Listing.objects.select_for_update().filter(pk=listing_id).first()
             txn = DealTransaction.objects.select_for_update().filter(
+                pk=txn_id,
                 listing_id=listing_id,
                 buyer_id=buyer_id
             ).select_related('listing').first()
@@ -587,7 +796,24 @@ class MessageViewSet(
         user = request.user
         messages = Message.objects.filter(
             Q(sender=user) | Q(recipient=user)
-        ).select_related('listing', 'sender__profile', 'recipient__profile').order_by('-created_at')
+        ).annotate(
+            thread_other_id=Case(
+                When(sender=user, then=F('recipient_id')),
+                default=F('sender_id'),
+                output_field=IntegerField(),
+            ),
+            thread_rank=Window(
+                expression=RowNumber(),
+                partition_by=[F('listing_id'), F('thread_other_id')],
+                order_by=[F('created_at').desc(), F('pk').desc()],
+            ),
+        ).filter(
+            thread_rank=1
+        ).select_related(
+            'listing',
+            'sender__profile',
+            'recipient__profile',
+        ).order_by('-created_at')
 
         threads = {}
         for m in messages:
@@ -602,7 +828,7 @@ class MessageViewSet(
                     'listingMaterial': m.listing.material,
                     'sellerId': str(m.listing.seller_id),
                     'otherUserId': str(other_user.id),
-                    'otherName': (profile.business_name if profile and profile.business_name else other_user.email) or "User",
+                    'otherName': (profile.business_name if profile and profile.business_name else None) or "EcoLoop User",
                     'otherAvatarUrl': profile.display_avatar_url if profile else None,
                     'preview': m.body[:80],
                     'timeLabel': m.created_at.strftime('%H:%M'),
@@ -699,13 +925,17 @@ class CarbonImpactView(views.APIView):
 
             party = t.seller if t.buyer == user else t.buyer
             party_profile = getattr(party, 'profile', None)
-            party_name = (party_profile.business_name if party_profile and party_profile.business_name else party.email) or "User"
+            party_name = (
+                party_profile.business_name
+                if party_profile and party_profile.business_name
+                else "EcoLoop User"
+            )
 
             recent.append({
                 'material': mat,
                 'party': party_name,
                 'weight': w,
-                'value': f"{t.listing.price_ngn:,.0f}" if t.listing.price_ngn else "0",
+                'value': f"{t.amount_ngn:,.0f}" if t.amount_ngn else "0",
                 'co2': co2,
                 'date': when.strftime('%d %b'),
             })
@@ -738,7 +968,9 @@ class ClassifyView(views.APIView):
     Replaces Next.js /api/classify route with Hugging Face integration.
     Accepts multipart file upload or imageUrl.
     """
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'classify'
 
     @extend_schema(
         request=ClassifyRequestSerializer,
@@ -755,15 +987,16 @@ class ClassifyView(views.APIView):
 
         image_bytes = None
         if image_file:
+            try:
+                validate_uploaded_image(image_file)
+            except DRFValidationError as error:
+                return Response({'error': str(error)}, status=400)
             image_bytes = image_file.read()
         elif image_url:
             try:
-                res = requests.get(image_url, timeout=15)
-                if not res.ok:
-                    return Response({'error': 'Could not fetch image from URL.'}, status=400)
-                image_bytes = res.content
-            except Exception as e:
-                return Response({'error': f'Failed to retrieve image: {str(e)}'}, status=400)
+                image_bytes = fetch_public_image(image_url)
+            except UnsafeImageUrl as error:
+                return Response({'error': str(error)}, status=400)
 
         try:
             result = classify_image_bytes(image_bytes)
@@ -776,13 +1009,13 @@ class MediaUploadView(views.APIView):
     permission_classes = [IsAuthenticated]
 
     MAX_BYTES = {
-        'listing-photo': 8 * 1024 * 1024,
+        'listing-photo': 5 * 1024 * 1024,
         'profile-avatar': 5 * 1024 * 1024,
         'message-attachment': 12 * 1024 * 1024,
     }
     IMAGE_TYPES = {'jpg', 'jpeg', 'png', 'webp'}
     ATTACHMENT_TYPES = IMAGE_TYPES | {
-        'gif', 'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'csv',
+        'pdf', 'doc', 'docx', 'xls', 'xlsx', 'txt', 'csv',
     }
 
     @extend_schema(
@@ -814,12 +1047,10 @@ class MediaUploadView(views.APIView):
             )
         if category != 'message-attachment' or extension in self.IMAGE_TYPES:
             try:
-                image = Image.open(uploaded)
-                image.verify()
-                uploaded.seek(0)
-            except (UnidentifiedImageError, OSError, ValueError):
+                validate_uploaded_image(uploaded)
+            except DRFValidationError as error:
                 return Response(
-                    {'error': 'The uploaded file is not a valid image.'},
+                    {'error': str(error)},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -853,98 +1084,135 @@ class PaystackInitializeView(views.APIView):
         listing_id = serializer.validated_data['listingId']
 
         expire_stale_payment_holds()
-        with db_transaction.atomic():
-            listing = Listing.objects.select_for_update().filter(id=listing_id).first()
-            if not listing:
-                return Response({'error': 'Listing not found.'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            with db_transaction.atomic():
+                listing = Listing.objects.select_for_update().filter(id=listing_id).first()
+                if not listing:
+                    return Response({'error': 'Listing not found.'}, status=status.HTTP_404_NOT_FOUND)
+                if listing.seller_id == request.user.id:
+                    return Response(
+                        {'error': 'You cannot purchase your own listing.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                if listing.status not in (ListingStatus.LIVE, ListingStatus.RESERVED):
+                    return Response(
+                        {'error': 'This listing is not available for purchase.'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if listing.price_ngn is None or listing.price_ngn <= 0:
+                    return Response(
+                        {'error': 'Listing does not have a valid price.'},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
 
-            if listing.seller == request.user:
-                return Response(
-                    {'error': 'You cannot purchase your own listing.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            if listing.status not in (ListingStatus.LIVE, ListingStatus.RESERVED):
-                return Response(
-                    {'error': 'This listing is not available for purchase.'},
-                    status=status.HTTP_409_CONFLICT
-                )
-
-            if not listing.price_ngn or listing.price_ngn <= 0:
-                return Response(
-                    {'error': 'Listing does not have a valid price.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-            # Check if reserved for another buyer
-            other_hold = DealTransaction.objects.filter(
-                listing=listing,
-                status=TransactionStatus.RESERVED
-            ).exclude(buyer=request.user).first()
-
-            if other_hold:
-                return Response(
-                    {'error': 'This listing is currently reserved for another buyer.'},
-                    status=status.HTTP_409_CONFLICT
-                )
-
-            reference = f"ECO-{uuid.uuid4().hex.upper()}-{secrets.token_hex(16).upper()}"
-            txn = DealTransaction.objects.select_for_update().filter(
-                listing=listing,
-                buyer=request.user,
-                seller=listing.seller,
-            ).first()
-            if txn and txn.disputes.filter(status=DisputeStatus.OPEN).exists():
-                return Response(
-                    {'error': 'An open dispute blocks payment initialization.'},
-                    status=status.HTTP_409_CONFLICT
-                )
-            if txn and txn.status == TransactionStatus.COMPLETED:
-                return Response(
-                    {'error': 'This purchase has already been completed.'},
-                    status=status.HTTP_409_CONFLICT
-                )
-            if txn:
-                txn.status = TransactionStatus.RESERVED
-                txn.payment_ref = reference
-                txn.paid_at = None
-                txn.completed_at = None
-                txn.amount_ngn = listing.price_ngn
-                txn.currency = 'NGN'
-                txn.save(
-                    update_fields=[
-                        'status',
-                        'payment_ref',
-                        'paid_at',
-                        'completed_at',
-                        'amount_ngn',
-                        'currency',
-                        'updated_at',
-                    ]
-                )
-            else:
-                DealTransaction.objects.create(
+                txn = DealTransaction.objects.select_for_update().filter(
                     listing=listing,
                     buyer=request.user,
                     seller=listing.seller,
-                    status=TransactionStatus.RESERVED,
-                    payment_ref=reference,
+                ).first()
+                competing_deal = DealTransaction.objects.select_for_update().filter(
+                    listing=listing,
+                    status__in=[TransactionStatus.RESERVED, TransactionStatus.COMPLETED],
+                ).exclude(pk=txn.pk if txn else None).first()
+                if competing_deal:
+                    return Response(
+                        {'error': 'This listing is currently reserved for another buyer.'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if listing.status == ListingStatus.RESERVED and (
+                    not txn or txn.status != TransactionStatus.RESERVED
+                ):
+                    return Response(
+                        {'error': 'This listing is currently reserved for another buyer.'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if txn and txn.disputes.filter(status=DisputeStatus.OPEN).exists():
+                    return Response(
+                        {'error': 'An open dispute blocks payment initialization.'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if txn and txn.status == TransactionStatus.COMPLETED:
+                    return Response(
+                        {'error': 'This purchase has already been completed.'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                now = timezone.now()
+                if txn and txn.status == TransactionStatus.RESERVED and txn.payment_ref:
+                    existing_attempt = PaymentAttempt.objects.filter(
+                        transaction=txn,
+                        reference=txn.payment_ref,
+                        status=PaymentAttempt.Status.INITIALIZED,
+                    ).first()
+                    if (
+                        existing_attempt
+                        and txn.hold_expires_at
+                        and txn.hold_expires_at > now
+                        and existing_attempt.amount_ngn == listing.price_ngn
+                    ):
+                        return self._response(listing, txn, existing_attempt.reference)
+
+                reference = f"ECO-{uuid.uuid4().hex.upper()}-{secrets.token_hex(16).upper()}"
+                expires_at = now + timedelta(minutes=settings.PAYMENT_HOLD_MINUTES)
+                if txn is None:
+                    txn = DealTransaction.objects.create(
+                        listing=listing,
+                        buyer=request.user,
+                        seller=listing.seller,
+                        status=TransactionStatus.RESERVED,
+                        payment_ref=reference,
+                        amount_ngn=listing.price_ngn,
+                        currency='NGN',
+                        hold_started_at=now,
+                        hold_expires_at=expires_at,
+                    )
+                else:
+                    txn.status = TransactionStatus.RESERVED
+                    txn.payment_ref = reference
+                    txn.paid_at = None
+                    txn.completed_at = None
+                    txn.amount_ngn = listing.price_ngn
+                    txn.currency = 'NGN'
+                    txn.hold_started_at = now
+                    txn.hold_expires_at = expires_at
+                    txn.save(
+                        update_fields=[
+                            'status',
+                            'payment_ref',
+                            'paid_at',
+                            'completed_at',
+                            'amount_ngn',
+                            'currency',
+                            'hold_started_at',
+                            'hold_expires_at',
+                            'updated_at',
+                        ]
+                    )
+                PaymentAttempt.objects.create(
+                    transaction=txn,
+                    reference=reference,
                     amount_ngn=listing.price_ngn,
-                    currency='NGN',
                 )
+                listing.status = ListingStatus.RESERVED
+                listing.save(update_fields=['status', 'updated_at'])
+                return self._response(listing, txn, reference)
+        except IntegrityError:
+            return Response(
+                {'error': 'This listing is currently reserved or sold.'},
+                status=status.HTTP_409_CONFLICT,
+            )
 
-            amount_ngn = float(txn.amount_ngn if txn else listing.price_ngn)
-            amount_kobo = int((txn.amount_ngn if txn else listing.price_ngn) * 100)
-
-            return Response({
-                'ok': True,
-                'reference': reference,
-                'listingId': str(listing.id),
-                'listingTitle': listing.title,
-                'amountNgn': amount_ngn,
-                'amountKobo': amount_kobo,
-                'publicKey': getattr(settings, 'PAYSTACK_PUBLIC_KEY', ''),
-            }, status=status.HTTP_200_OK)
+    def _response(self, listing, txn, reference):
+        return Response({
+            'ok': True,
+            'reference': reference,
+            'transactionId': str(txn.pk),
+            'listingId': str(listing.id),
+            'listingTitle': listing.title,
+            'amountNgn': float(txn.amount_ngn),
+            'amountKobo': int(txn.amount_ngn * 100),
+            'publicKey': getattr(settings, 'PAYSTACK_PUBLIC_KEY', ''),
+        }, status=status.HTTP_200_OK)
 
 
 class PaystackVerifyView(views.APIView):
@@ -965,61 +1233,58 @@ class PaystackVerifyView(views.APIView):
         ref = serializer.validated_data['reference']
         listing_id = serializer.validated_data['listingId']
 
-        now = timezone.now()
-        with db_transaction.atomic():
-            # Database-level row lock
-            listing = Listing.objects.select_for_update().filter(id=listing_id).first()
-            if not listing:
-                return Response({'error': 'Listing not found.'}, status=status.HTTP_404_NOT_FOUND)
+        attempt = PaymentAttempt.objects.select_related(
+            'transaction__listing',
+            'transaction__buyer',
+            'transaction__seller',
+        ).filter(
+            reference=ref,
+            transaction__listing_id=listing_id,
+            transaction__buyer=request.user,
+        ).first()
+        if attempt is None:
+            return Response(
+                {'error': 'Payment reference does not match this purchase.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if attempt.status == PaymentAttempt.Status.PAID:
+            return Response({
+                'ok': True,
+                'reference': ref,
+                'listingId': str(attempt.transaction.listing_id),
+                'amountNgn': float(attempt.amount_ngn),
+                'message': 'Payment was already verified.',
+                'alreadyProcessed': True,
+            })
+        if attempt.status in (PaymentAttempt.Status.RECONCILIATION, PaymentAttempt.Status.REFUNDED):
+            return Response(
+                {'error': 'Payment requires refund reconciliation.'},
+                status=status.HTTP_409_CONFLICT,
+            )
 
-            if listing.status == ListingStatus.SOLD:
-                return Response({'error': 'This listing is already sold.'}, status=status.HTTP_409_CONFLICT)
+        try:
+            verify_paystack_transaction(ref, attempt.amount_ngn)
+            txn, result = settle_payment_attempt(attempt.pk, {
+                'reference': ref,
+                'amount': int(attempt.amount_ngn * 100),
+                'currency': 'NGN',
+                'status': 'success',
+            })
+        except PaymentPayloadError as error:
+            return Response({'error': str(error)}, status=status.HTTP_402_PAYMENT_REQUIRED)
 
-            if listing.seller == request.user:
-                return Response({'error': 'You cannot purchase your own listing.'}, status=status.HTTP_400_BAD_REQUEST)
-
-            txn = DealTransaction.objects.select_for_update().filter(
-                listing=listing,
-                buyer=request.user,
-                seller=listing.seller,
-            ).first()
-            if not txn or txn.status != TransactionStatus.RESERVED:
-                return Response(
-                    {'error': 'Initialize this purchase before verifying payment.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            if txn.payment_ref != ref:
-                return Response(
-                    {'error': 'Payment reference does not match this purchase.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            if DealTransaction.objects.filter(payment_ref=ref).exclude(pk=txn.pk).exists():
-                return Response(
-                    {'error': 'This payment reference was already used.'},
-                    status=status.HTTP_409_CONFLICT
-                )
-
-            if txn.disputes.filter(status=DisputeStatus.OPEN).exists():
-                return Response({'error': 'An open dispute blocks deal status changes.'}, status=409)
-
-            expected_price_ngn = txn.amount_ngn
-            if not expected_price_ngn or expected_price_ngn <= 0 or txn.currency != 'NGN':
-                return Response({'error': 'This transaction has no valid NGN payment amount.'}, status=400)
-
-            # Verify against the immutable amount snapshot stored at initialization.
-            verify_paystack_transaction(ref, expected_price_ngn)
-
-            txn.status = TransactionStatus.COMPLETED
-            txn.paid_at = now
-            txn.completed_at = now
-            txn.save()
-
+        if result == 'reconciliation':
+            return Response(
+                {'error': 'Payment succeeded but the listing is no longer available; refund reconciliation is required.'},
+                status=status.HTTP_409_CONFLICT,
+            )
         return Response({
             'ok': True,
             'reference': ref,
-            'listingId': str(listing.id),
-            'amountNgn': float(expected_price_ngn),
-            'message': 'Payment verified and listing marked as Sold.'
+            'listingId': str(txn.listing_id),
+            'amountNgn': float(attempt.amount_ngn),
+            'message': 'Payment verified and listing marked as Sold.',
+            'alreadyProcessed': result == 'already_processed',
         })
 
 
@@ -1027,7 +1292,7 @@ class PaystackWebhookView(views.APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     throttle_classes = [ScopedRateThrottle]
-    throttle_scope = 'pay'
+    throttle_scope = 'webhook'
 
     @extend_schema(
         request=OpenApiTypes.OBJECT,
@@ -1057,27 +1322,47 @@ class PaystackWebhookView(views.APIView):
         if not isinstance(reference, str) or not reference.strip():
             return Response({'error': 'Webhook reference is required.'}, status=400)
 
-        txn = DealTransaction.objects.filter(payment_ref=reference).select_related('listing').first()
-        if txn is None:
-            return Response({'error': 'Payment reference not found.'}, status=404)
-        if txn.status == TransactionStatus.COMPLETED and txn.paid_at:
-            return Response({'received': True, 'already_processed': True})
-        if txn.status != TransactionStatus.RESERVED or not txn.amount_ngn:
-            return Response({'error': 'No active payment exists for this reference.'}, status=409)
-
-        verify_paystack_transaction(reference, txn.amount_ngn)
-        with db_transaction.atomic():
-            locked = DealTransaction.objects.select_for_update().get(pk=txn.pk)
-            listing = Listing.objects.select_for_update().get(pk=locked.listing_id)
-            if locked.status == TransactionStatus.COMPLETED and locked.paid_at:
-                return Response({'received': True, 'already_processed': True})
-            if locked.status != TransactionStatus.RESERVED or locked.payment_ref != reference:
-                return Response({'error': 'Payment reference is no longer active.'}, status=409)
-            if locked.disputes.filter(status=DisputeStatus.OPEN).exists():
-                return Response({'error': 'An open dispute blocks payment completion.'}, status=409)
-            now = timezone.now()
-            locked.status = TransactionStatus.COMPLETED
-            locked.paid_at = now
-            locked.completed_at = now
-            locked.save()
-        return Response({'received': True, 'listingId': str(listing.pk)})
+        attempt = PaymentAttempt.objects.select_related('transaction').filter(
+            reference=reference,
+        ).first()
+        if attempt is None:
+            return Response({'received': True, 'ignored': True})
+        if attempt.status == PaymentAttempt.Status.PAID:
+            return Response({
+                'received': True,
+                'listingId': str(attempt.transaction.listing_id),
+                'already_processed': True,
+            })
+        if attempt.status in (
+            PaymentAttempt.Status.RECONCILIATION,
+            PaymentAttempt.Status.REFUNDED,
+        ):
+            return Response({
+                'received': True,
+                'listingId': str(attempt.transaction.listing_id),
+                'reconciliation_required': True,
+            })
+        try:
+            if not isinstance(data, dict) or data.get('status') != 'success':
+                return Response({'error': 'Webhook payment status is invalid.'}, status=400)
+            validate_paystack_success(
+                reference,
+                attempt.amount_ngn,
+                attempt.transaction.currency,
+                data,
+            )
+            verify_paystack_transaction(reference, attempt.amount_ngn)
+            txn, result = settle_payment_attempt(attempt.pk, data)
+        except PaymentPayloadError as error:
+            return Response({'error': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+        if result == 'reconciliation':
+            return Response({
+                'received': True,
+                'reconciliation_required': True,
+                'listingId': str(txn.listing_id),
+            })
+        return Response({
+            'received': True,
+            'listingId': str(txn.listing_id),
+            'already_processed': result == 'already_processed',
+        })

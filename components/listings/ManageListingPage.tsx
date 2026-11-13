@@ -17,7 +17,6 @@ import {
 import type { ListingStatus } from "@/lib/types";
 
 const MAX_PHOTOS = 6;
-const STATUS_OPTIONS: ListingStatus[] = ["Live", "Draft", "Reserved", "Sold"];
 
 interface ManageListingPageProps {
   id: string;
@@ -197,7 +196,6 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
         title,
         weightKg,
         priceNgn,
-        status,
         photoUrl: coverUrl,
         photoUrls: extraUrls,
         zone,
@@ -218,7 +216,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
     const locked = status === "Reserved" || status === "Sold";
     if (locked) {
       setError(
-        "Reserved or sold listings can’t be deleted. Change status only if the deal fell through, or keep the record."
+        "Reserved or sold listings can’t be deleted. Contact support if the deal needs review."
       );
       return;
     }
@@ -300,6 +298,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
                 className="input"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                disabled={status === "Reserved" || status === "Sold"}
                 required
               />
             </div>
@@ -311,6 +310,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
                   className="input input--mono"
                   value={weight}
                   onChange={(e) => setWeight(e.target.value)}
+                  disabled={status === "Reserved" || status === "Sold"}
                   required
                 />
               </div>
@@ -320,6 +320,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
                   className="input input--mono"
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
+                  disabled={status === "Reserved" || status === "Sold"}
                   placeholder="52,000"
                 />
               </div>
@@ -333,16 +334,12 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
                   options={zoneOptions}
                   onChange={setZone}
                   aria-label="Pickup zone"
+                  disabled={status === "Reserved" || status === "Sold"}
                 />
               </div>
               <div>
                 <label className="field-label">Status</label>
-                <Select
-                  value={status}
-                  options={STATUS_OPTIONS}
-                  onChange={(v) => setStatus(v as ListingStatus)}
-                  aria-label="Listing status"
-                />
+                <div className="input" aria-live="polite">{status}</div>
               </div>
             </div>
 
@@ -353,7 +350,13 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
               </div>
             ) : null}
 
-            <button type="submit" className="btn btn-primary" disabled={saving || uploading || deleting}>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={
+                saving || uploading || deleting || status === "Reserved" || status === "Sold"
+              }
+            >
               {saving ? "Saving…" : "Save changes"}
             </button>
           </div>
@@ -437,6 +440,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
             accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
             multiple
             hidden
+            disabled={status === "Reserved" || status === "Sold"}
             onChange={(e) => void onAddPhotos(e.target.files)}
           />
         </div>
@@ -450,7 +454,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
         </p>
         {status === "Reserved" || status === "Sold" ? (
           <div className="field-foot" style={{ marginTop: 8 }}>
-            Status is {status} — delete is locked.
+            Status is {status} — editing and deletion are locked.
           </div>
         ) : null}
         <button

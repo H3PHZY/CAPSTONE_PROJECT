@@ -93,6 +93,7 @@ export function MessageToastNotifier() {
     const activeTimers = timers.current;
 
     async function pollInbox() {
+      if (document.visibilityState !== "visible") return;
       if (polling) return;
       polling = true;
       try {
@@ -128,10 +129,15 @@ export function MessageToastNotifier() {
     }
 
     void pollInbox();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void pollInbox();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     const interval = setInterval(() => void pollInbox(), POLL_INTERVAL_MS);
     return () => {
       active = false;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       for (const timer of activeTimers.values()) clearTimeout(timer);
       activeTimers.clear();
     };

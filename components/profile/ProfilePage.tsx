@@ -38,6 +38,7 @@ export function ProfilePage() {
   const [buys, setBuys] = useState(true);
   const [carbonImpact, setCarbonImpact] = useState(false);
   const [email, setEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -187,18 +188,24 @@ export function ProfilePage() {
     setSavingCreds(true);
     try {
       const notes: string[] = [];
-      if (email.trim() && email.trim() !== (user?.email || "")) {
-        await updateEmail(email);
+      const emailChanged = email.trim() !== (user?.email || "");
+      if ((emailChanged || password) && !currentPassword) {
+        throw new Error("Enter your current password to change account credentials.");
+      }
+      if (emailChanged) {
+        await updateEmail(email, currentPassword);
+        setEmail(email.trim());
         notes.push("Check your inbox to confirm the new email.");
       }
       if (password) {
         if (password.length < 8) throw new Error("Password must be at least 8 characters.");
         if (password !== confirmPassword) throw new Error("Passwords do not match.");
-        await updatePassword(password);
+        await updatePassword(password, currentPassword);
         setPassword("");
         setConfirmPassword("");
         notes.push("Password updated.");
       }
+      setCurrentPassword("");
       if (notes.length === 0) {
         setCredMsg("No credential changes to save.");
       } else {
@@ -330,6 +337,17 @@ export function ProfilePage() {
         <form className="panel panel--pad" onSubmit={saveProfile}>
           <div className="panel-label">BUSINESS PROFILE</div>
           <div className="form-stack" style={{ marginTop: 14 }}>
+            <div>
+              <label className="field-label">Current password</label>
+              <input
+                type="password"
+                className="input"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                autoComplete="current-password"
+                placeholder="Required to change email or password"
+              />
+            </div>
             <div>
               <div className="field-label">What do you use EcoLoop for?</div>
               <div className="role-cards role-cards--compact">

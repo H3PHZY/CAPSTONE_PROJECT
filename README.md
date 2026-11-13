@@ -78,18 +78,22 @@ Use the same Django API base URL on every deployment; it must end in `/api` with
 
 ## API surfaces
 
-- `POST /api/auth/signup/`, `POST /api/auth/login/`, `POST /api/auth/refresh/`, `GET/PATCH /api/auth/me/`
+- `POST /api/auth/signup/`, `POST /api/auth/login/`, `POST /api/auth/refresh/`, `POST /api/auth/logout/`, `GET/PATCH /api/auth/me/`
 - `POST /api/auth/password-reset/` and `/api/auth/password-reset/confirm/`
 - `GET/POST /api/listings/`, `GET/PATCH/DELETE /api/listings/{id}/`, `GET /api/listings/mine/`
 - `GET /api/messages/inbox/`, `GET /api/messages/thread/`, `POST /api/messages/`
-- `GET /api/transactions/`, `POST /api/transactions/mark_agreed/`, `POST /api/transactions/mark_completed/`
+- `GET /api/transactions/`, `POST /api/transactions/mark_agreed/`, `POST /api/transactions/mark_completed/`, `POST /api/transactions/{id}/cancel/`
 - `GET/POST /api/disputes/` (paid-deal disputes; admin staff resolve them)
 - `POST /api/media/upload/`, `POST /api/classify/`
 - `POST /api/pay/initialize/`, `POST /api/pay/verify/`, `POST /api/pay/webhook/`
 - `GET /api/health/`
 - `GET /api/impact/`
 
-Messaging uses short polling (5 seconds while the Messages page is open; 7 seconds for notifications) instead of a realtime database connection.
+Payment initialization stores each server-generated reference in an immutable `PaymentAttempt` ledger. Holds expire after `PAYMENT_HOLD_MINUTES` (30 by default); closing Paystack calls the transaction cancellation endpoint, and late successful payments are either fulfilled once or retained for refund reconciliation. Transaction status, references, and payment timestamps cannot be changed through generic write endpoints.
+
+Classification requires an authenticated user. Remote image URLs must use HTTPS, resolve only to public IP addresses, return an image content type, and remain within the 5 MB cap; redirects are not followed. Uploaded listing/profile images use the same content and image validation.
+
+Messaging uses short polling (5 seconds while the Messages page is open; 7 seconds for notifications) instead of a realtime database connection, and polling pauses while the browser tab is hidden.
 
 ## Validation commands
 

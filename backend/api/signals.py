@@ -66,6 +66,13 @@ def apply_transaction_listing_status(sender, instance, created, **kwargs):
                 factor_kg_per_kg=factor,
                 notes="LCA estimate vs virgin material (EcoLoop pilot)"
             )
+    elif instance.status == TransactionStatus.INTEREST:
+        if listing.status == ListingStatus.RESERVED and not Transaction.objects.filter(
+            listing_id=listing.pk,
+            status__in=[TransactionStatus.RESERVED, TransactionStatus.COMPLETED],
+        ).exclude(pk=instance.pk).exists():
+            listing.status = ListingStatus.LIVE
+            listing.save(update_fields=['status', 'updated_at'])
 
 # ─── 3. Message -> Auto Interest Transaction ─────────────────────────────────
 

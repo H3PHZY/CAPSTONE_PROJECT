@@ -11,6 +11,7 @@ from api.views import (
     SignupView,
     LoginView,
     MeView,
+    LogoutView,
     PasswordResetRequestView,
     PasswordResetConfirmView,
     ListingViewSet,
@@ -44,6 +45,7 @@ urlpatterns = [
     path('auth/login/', LoginView.as_view(), name='auth-login'),
     path('auth/refresh/', TokenRefreshView.as_view(), name='auth-refresh'),
     path('auth/me/', MeView.as_view(), name='auth-me'),
+    path('auth/logout/', LogoutView.as_view(), name='auth-logout'),
     path('auth/password-reset/', PasswordResetRequestView.as_view(), name='auth-password-reset'),
     path('auth/password-reset/confirm/', PasswordResetConfirmView.as_view(), name='auth-password-reset-confirm'),
 

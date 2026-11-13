@@ -19,6 +19,7 @@ import {
   type MessageThread,
 } from "@/lib/messages";
 import { canManuallyCompleteTransaction } from "@/lib/transaction-ui";
+import { PaystackButton } from "@/components/marketplace/PaystackButton";
 import {
   getPairTransactionView,
   markAsAgreed,
@@ -92,16 +93,21 @@ export function MessagesPage() {
     activeRef.current = active;
   }, [active]);
 
+  const userId = user?.id;
+  const activeListingId = active?.listingId;
+  const activeThreadKey = active?.key;
+  const activeSellerId = active?.sellerId;
+  const activeOtherUserId = active?.otherUserId;
   const parties = useMemo(() => {
-    if (!user || !active?.sellerId) return null;
-    const sellerId = active.sellerId;
-    const buyerId = user.id === sellerId ? active.otherUserId : user.id;
+    if (!userId || !activeSellerId || !activeOtherUserId) return null;
+    const sellerId = activeSellerId;
+    const buyerId = userId === sellerId ? activeOtherUserId : userId;
     if (!buyerId || buyerId === sellerId) return null;
     return { buyerId, sellerId };
-  }, [user, active]);
+  }, [userId, activeSellerId, activeOtherUserId]);
   const txnKey =
-    user && parties && active
-      ? `${active.key}:${parties.buyerId}:${parties.sellerId}`
+    userId && parties && activeThreadKey
+      ? `${activeThreadKey}:${parties.buyerId}:${parties.sellerId}`
       : null;
   const txn = txnKey && txnResult?.key === txnKey ? txnResult.view : null;
   const visibleMsgs = active?.key.startsWith("new:") ? [] : msgs;
@@ -166,12 +172,13 @@ export function MessagesPage() {
   }, [ready, user, listingParam, openAuth, reloadInbox]);
 
   useEffect(() => {
-    if (!user || !active || active.key.startsWith("new:")) {
+    if (!userId || !activeThreadKey || !activeListingId || !activeOtherUserId ||
+      activeThreadKey.startsWith("new:")) {
       return;
     }
 
     let alive = true;
-    void fetchThreadMessages(active.listingId, active.otherUserId)
+    void fetchThreadMessages(activeListingId, activeOtherUserId)
       .then((rows) => {
         if (alive) setMsgs(rows);
       })
@@ -184,15 +191,16 @@ export function MessagesPage() {
     return () => {
       alive = false;
     };
-  }, [user, active]);
+  }, [userId, activeThreadKey, activeListingId, activeOtherUserId]);
 
   // Keep the inbox and active thread fresh without a realtime provider.
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
 
     let activeEffect = true;
     let polling = false;
     const poll = async () => {
+      if (document.visibilityState !== "visible") return;
       if (polling) return;
       polling = true;
       try {
@@ -229,27 +237,32 @@ export function MessagesPage() {
       }
     };
 
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void poll();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     const interval = setInterval(() => void poll(), 5000);
     return () => {
       activeEffect = false;
       clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [user, reloadInbox]);
+  }, [userId, reloadInbox]);
 
   useEffect(() => {
     const el = msgsBodyRef.current;
     if (!el) return;
     el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-  }, [visibleMsgs.length, active?.key]);
+  }, [visibleMsgs.length, activeThreadKey]);
 
   useEffect(() => {
-    if (!user || !parties || !active) {
+    if (!userId || !parties || !activeThreadKey || !activeListingId) {
       return;
     }
     let alive = true;
-    const key = `${active.key}:${parties.buyerId}:${parties.sellerId}`;
+    const key = `${activeThreadKey}:${parties.buyerId}:${parties.sellerId}`;
     void getPairTransactionView(
-      active.listingId,
+      activeListingId,
       parties.buyerId,
       parties.sellerId
     )
@@ -262,7 +275,7 @@ export function MessagesPage() {
     return () => {
       alive = false;
     };
-  }, [user, parties, active]);
+  }, [userId, parties, activeThreadKey, activeListingId]);
 
   async function pushMsg(
     text: string,
@@ -417,6 +430,24 @@ export function MessagesPage() {
     }
   }
 
+  async function refreshAfterPayment() {
+    if (!active || !parties) return;
+    try {
+      await reloadInbox();
+      const view = await getPairTransactionView(
+        active.listingId,
+        parties.buyerId,
+        parties.sellerId
+      );
+      setTxnResult({
+        key: `${active.key}:${parties.buyerId}:${parties.sellerId}`,
+        view,
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not refresh the deal.");
+    }
+  }
+
   if (!ready || loading) {
     return (
       <div className="page-shell page-shell--msgs">
@@ -446,8 +477,9 @@ export function MessagesPage() {
 
   const status = txn?.status;
   const isSeller = Boolean(user && active && user.id === active.sellerId);
+  const isBuyer = Boolean(user && parties && user.id === parties.buyerId);
   const canAgree =
-    isSeller && Boolean(parties) && status !== "Reserved" && status !== "Completed";
+    isSeller && Boolean(parties) && status === "Interest";
   const canComplete =
     Boolean(parties) &&
     canManuallyCompleteTransaction(status, txn?.amountNgn, txn?.paidAt);
@@ -566,17 +598,27 @@ export function MessagesPage() {
                 </div>
               </div>
 
-              {status === "Reserved" &&
-              txn?.amountNgn &&
-              txn.amountNgn > 0 &&
-              !txn.paidAt ? (
+              {status === "Reserved" && isBuyer && txn?.amountNgn &&
+              txn.amountNgn > 0 && !txn.paidAt ? (
                 <div className="msgs-pay-hint">
-                  Payment is outstanding. Complete payment through Paystack before marking this
-                  exchange completed.
+                  Complete payment securely to finish reserving this listing.
+                  <PaystackButton
+                    buyerEmail={user.email}
+                    buyerId={user.id}
+                    listingId={active.listingId}
+                    priceFormatted={txn.amountNgn.toLocaleString("en-NG")}
+                    listingTitle={active.listingTitle}
+                    onPurchaseComplete={() => void refreshAfterPayment()}
+                  />
+                </div>
+              ) : status === "Reserved" && txn?.amountNgn &&
+              txn.amountNgn > 0 && !txn.paidAt ? (
+                <div className="msgs-pay-hint">
+                  Waiting for the buyer to complete payment through Paystack.
                 </div>
               ) : status === "Reserved" ? (
                 <div className="msgs-pay-hint">
-                  Reserved — complete payment securely via the integrated Paystack checkout on the listing page, or confirm and mark completed upon physical handover.
+                  Payment is confirmed. Mark the exchange completed after the handover.
                 </div>
               ) : null}
 

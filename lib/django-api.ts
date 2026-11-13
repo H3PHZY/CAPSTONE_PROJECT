@@ -93,8 +93,12 @@ export async function djangoRequest<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const res = await apiFetch(path, options);
-  if (!res.ok) return handleError(res);
-  if (res.status === 204) return undefined as T;
+  if (!res.ok) {
+    return handleError(res, {
+      clearSession: path !== "/auth/login/" && path !== "/auth/signup/",
+    });
+  }
+  if (res.status === 204 || res.status === 205) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -230,6 +234,28 @@ export const djangoListings = {
 export const djangoTransactions = {
   fetchMine() {
     return djangoList<DjangoTransaction>("/transactions/");
+  },
+
+  fetchPair(listingId: string, buyerId: string, sellerId: string) {
+    const query = new URLSearchParams({
+      listing_id: listingId,
+      buyer_id: buyerId,
+      seller_id: sellerId,
+    });
+    return djangoList<DjangoTransaction>(`/transactions/?${query}`);
+  },
+
+  fetchById(id: string) {
+    return djangoRequest<DjangoTransaction>(
+      `/transactions/${encodeURIComponent(id)}/`
+    );
+  },
+
+  cancel(id: string) {
+    return djangoRequest<DjangoTransaction>(
+      `/transactions/${encodeURIComponent(id)}/cancel/`,
+      { method: "POST" }
+    );
   },
 
   markAgreed(listingId: string, buyerId: string) {

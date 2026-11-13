@@ -1,9 +1,24 @@
 import { djangoRequest } from "@/lib/django-api";
 
 declare global {
+  type PaystackResult = { reference: string };
+  type PaystackTransaction = {
+    key: string;
+    email: string;
+    amount: number;
+    currency: "NGN";
+    reference: string;
+    label: string;
+    metadata: Record<string, unknown>;
+    onSuccess: (response: PaystackResult) => void;
+    onCancel: () => void;
+  };
+  type PaystackPopup = {
+    newTransaction: (transaction: PaystackTransaction) => void;
+  };
+
   interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    PaystackPop?: any;
+    PaystackPop?: new () => PaystackPopup;
   }
 }
 
@@ -54,6 +69,7 @@ export type OpenPaystackOptions = {
 export type PaymentInitialization = {
   ok: boolean;
   reference: string;
+  transactionId: string;
   amountNgn: number;
   amountKobo: number;
   listingTitle: string;
@@ -84,23 +100,35 @@ export async function openPaystack(
       return;
     }
 
-    const handler = window.PaystackPop.setup({
+    const popup = new window.PaystackPop();
+    popup.newTransaction({
       key: options.publicKey,
       email: options.email,
       amount: options.amountKobo,
       currency: "NGN",
-      ref: options.reference,
+      reference: options.reference,
       label: options.label ?? "EcoLoop material purchase",
       metadata: options.metadata ?? {},
-      callback: (response: { reference: string }) => {
+      onSuccess: (response: { reference: string }) => {
         resolve(response.reference);
       },
-      onClose: () => {
-        reject(new Error("Payment window was closed before completion."));
+      onCancel: () => {
+        reject(new PaymentCancelledError());
       },
     });
+  });
+}
 
-    handler.openIframe();
+export class PaymentCancelledError extends Error {
+  constructor() {
+    super("Payment window was closed before completion.");
+    this.name = "PaymentCancelledError";
+  }
+}
+
+export async function cancelPaymentHold(transactionId: string) {
+  return djangoRequest(`/transactions/${encodeURIComponent(transactionId)}/cancel/`, {
+    method: "POST",
   });
 }
 

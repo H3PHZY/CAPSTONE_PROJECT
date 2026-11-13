@@ -135,7 +135,12 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   } else {
     first = await request();
   }
-  if (first.status !== 401 || path === "/auth/refresh/") return first;
+  if (
+    first.status !== 401 ||
+    path === "/auth/refresh/" ||
+    path === "/auth/login/" ||
+    path === "/auth/signup/"
+  ) return first;
 
   const token = await refreshAccessToken();
   if (!token) return first;
@@ -152,8 +157,12 @@ export class DjangoApiError extends Error {
   }
 }
 
-export async function handleError(res: Response): Promise<never> {
-  if (res.status === 401) {
+export async function handleError(
+  res: Response,
+  options: { clearSession?: boolean } = {}
+): Promise<never> {
+  const clearSession = options.clearSession ?? true;
+  if (res.status === 401 && clearSession) {
     clearTokens();
     if (typeof window !== "undefined") {
       window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
@@ -168,7 +177,7 @@ export async function handleError(res: Response): Promise<never> {
   }
 
   const message =
-    res.status === 401
+    res.status === 401 && clearSession
       ? "Session expired, please log in again"
       : res.status === 503
         ? "EcoLoop is temporarily unavailable. The service may be waking up; please try again shortly."

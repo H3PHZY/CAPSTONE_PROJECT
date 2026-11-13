@@ -5,6 +5,11 @@ from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils.translation import gettext_lazy as _
 from api.utils import is_pilot_verified, get_coords_for_zone
+from api.validators import (
+    listing_photo_upload_path,
+    message_attachment_upload_path,
+    profile_avatar_upload_path,
+)
 
 # ─── Enumerations / Choices ──────────────────────────────────────────────────
 
@@ -52,7 +57,7 @@ class Profile(models.Model):
     carbon_impact = models.BooleanField(default=False)
     research_consent = models.BooleanField(default=False)
     verified = models.BooleanField(default=False)
-    avatar = models.ImageField(upload_to='profile_avatars/', null=True, blank=True)
+    avatar = models.ImageField(upload_to=profile_avatar_upload_path, null=True, blank=True)
     avatar_url = models.URLField(max_length=1000, null=True, blank=True)
     lat = models.FloatField(null=True, blank=True)
     lng = models.FloatField(null=True, blank=True)
@@ -120,7 +125,7 @@ class Listing(models.Model):
         choices=ListingStatus.choices,
         default=ListingStatus.DRAFT
     )
-    photo = models.ImageField(upload_to='listing_photos/', null=True, blank=True)
+    photo = models.ImageField(upload_to=listing_photo_upload_path, null=True, blank=True)
     photo_url = models.URLField(max_length=1000, null=True, blank=True)
     photo_urls = models.JSONField(default=list, blank=True)
     zone = models.CharField(max_length=100, default='Ogba')
@@ -164,7 +169,7 @@ class Listing(models.Model):
             return self.photo.url
         if self.photo_url:
             return self.photo_url
-        if self.photo_urls and len(self.photo_urls) > 0:
+        if isinstance(self.photo_urls, list) and self.photo_urls:
             return self.photo_urls[0]
         return None
 
@@ -250,6 +255,8 @@ class Transaction(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
     amount_ngn = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
     currency = models.CharField(max_length=3, default='NGN')
+    hold_started_at = models.DateTimeField(null=True, blank=True)
+    hold_expires_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -289,10 +296,59 @@ class Transaction(models.Model):
             models.Index(fields=['buyer'], name='txn_buyer_idx'),
             models.Index(fields=['seller'], name='txn_seller_idx'),
             models.Index(fields=['status'], name='txn_status_idx'),
+            models.Index(fields=['status', 'hold_expires_at'], name='txn_hold_expiry_idx'),
         ]
 
     def __str__(self):
         return f"Txn ({self.status}): {self.listing.title} [Buyer: {self.buyer.id}, Seller: {self.seller.id}]"
+
+
+class PaymentAttempt(models.Model):
+    class Status(models.TextChoices):
+        INITIALIZED = 'Initialized', _('Initialized')
+        PAID = 'Paid', _('Paid')
+        EXPIRED = 'Expired', _('Expired')
+        CANCELLED = 'Cancelled', _('Cancelled')
+        RECONCILIATION = 'Reconciliation', _('Reconciliation')
+        REFUNDED = 'Refunded', _('Refunded')
+
+    transaction = models.ForeignKey(
+        Transaction,
+        on_delete=models.PROTECT,
+        related_name='payment_attempts',
+    )
+    reference = models.CharField(max_length=255, unique=True)
+    amount_ngn = models.DecimalField(max_digits=14, decimal_places=2)
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.INITIALIZED,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['transaction', 'created_at'], name='pay_attempt_txn_created_idx')]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(amount_ngn__gt=0),
+                name='payment_attempt_amount_positive',
+            ),
+            models.CheckConstraint(
+                check=models.Q(status__in=[
+                    'Initialized',
+                    'Paid',
+                    'Expired',
+                    'Cancelled',
+                    'Reconciliation',
+                    'Refunded',
+                ]),
+                name='payment_attempt_status_valid',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.reference} ({self.status})'
 
 # ─── 5. CarbonRecord Model ────────────────────────────────────────────────────
 
@@ -358,7 +414,7 @@ class Message(models.Model):
         related_name='replies'
     )
     image_url = models.CharField(max_length=1000, null=True, blank=True)
-    attachment = models.FileField(upload_to='message_attachments/', null=True, blank=True)
+    attachment = models.FileField(upload_to=message_attachment_upload_path, null=True, blank=True)
     attachment_name = models.CharField(max_length=255, null=True, blank=True)
     attachment_mime = models.CharField(max_length=100, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

@@ -7,6 +7,7 @@ from api.models import (
     CarbonRecord,
     Message,
     Dispute,
+    PaymentAttempt,
 )
 
 @admin.register(Profile)
@@ -62,3 +63,10 @@ class DisputeAdmin(admin.ModelAdmin):
     list_filter = ('status',)
     search_fields = ('transaction__listing__title', 'raised_by__email', 'reason')
     readonly_fields = ('transaction', 'raised_by', 'reason', 'created_at')
+
+@admin.register(PaymentAttempt)
+class PaymentAttemptAdmin(admin.ModelAdmin):
+    list_display = ('reference', 'transaction', 'amount_ngn', 'status', 'created_at')
+    list_filter = ('status',)
+    search_fields = ('reference', 'transaction__listing__title')
+    readonly_fields = ('transaction', 'reference', 'amount_ngn', 'created_at')

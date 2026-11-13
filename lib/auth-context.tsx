@@ -77,6 +77,10 @@ type DjangoAuthResponse = {
   tokens: { access: string; refresh: string };
 };
 
+type DjangoCredentialResponse = DjangoUserResponse & {
+  tokens?: { access: string; refresh: string };
+};
+
 /** Pilot trust model: business name + phone + sell/buy role → verified badge. */
 export function isPilotVerified(input: {
   businessName: string;
@@ -105,7 +109,7 @@ export interface AuthContextValue {
   setAuthMode: (mode: AuthMode) => void;
   login: (email: string, password: string, signup?: SignupProfile) => Promise<void>;
   requestPasswordReset: (email: string) => Promise<void>;
-  updatePassword: (password: string) => Promise<void>;
+  updatePassword: (password: string, currentPassword: string) => Promise<void>;
   updateProfile: (patch: {
     businessName: string;
     phone: string;
@@ -119,7 +123,7 @@ export interface AuthContextValue {
     lng?: number | null;
   }) => Promise<void>;
   updateAvatar: (avatarUrl: string | null) => Promise<void>;
-  updateEmail: (email: string) => Promise<void>;
+  updateEmail: (email: string, currentPassword: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -251,14 +255,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const updatePassword = useCallback(async (password: string) => {
+  const updatePassword = useCallback(async (password: string, currentPassword: string) => {
     if (password.length < 8) {
       throw new Error("Password must be at least 8 characters.");
     }
-    const response = await djangoRequest<DjangoUserResponse>("/auth/me/", {
+    const response = await djangoRequest<DjangoCredentialResponse>("/auth/me/", {
       method: "PATCH",
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ password, current_password: currentPassword }),
     });
+    if (response.tokens) setTokens(response.tokens.access, response.tokens.refresh);
     const data = profileFromResponse(response);
     setProfile(data);
     setUser(profileToUser(data));
@@ -321,25 +326,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile(data);
   }, []);
 
-  const updateEmail = useCallback(async (email: string) => {
+  const updateEmail = useCallback(async (email: string, currentPassword: string) => {
     const next = email.trim();
     if (!next) throw new Error("Email is required");
-    const response = await djangoRequest<DjangoUserResponse>("/auth/me/", {
+    const response = await djangoRequest<DjangoCredentialResponse>("/auth/me/", {
       method: "PATCH",
-      body: JSON.stringify({ email: next }),
+      body: JSON.stringify({ email: next, current_password: currentPassword }),
     });
+    if (response.tokens) setTokens(response.tokens.access, response.tokens.refresh);
     const data = profileFromResponse(response);
     setProfile(data);
     setUser(profileToUser(data));
   }, []);
 
   const logout = useCallback(async () => {
-    clearTokens();
-    setUser(null);
-    setProfile(null);
-    setPrefs(DEFAULT_PREFS);
-    setPendingPath(null);
-    setAuthOpen(false);
+    try {
+      if (getToken()) {
+        await djangoRequest<void>("/auth/logout/", { method: "POST" });
+      }
+    } catch (error) {
+      console.warn("Could not revoke the server session during logout", error);
+    } finally {
+      clearTokens();
+      setUser(null);
+      setProfile(null);
+      setPrefs(DEFAULT_PREFS);
+      setPendingPath(null);
+      setAuthOpen(false);
+    }
   }, []);
 
   const value = useMemo(

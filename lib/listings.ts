@@ -277,7 +277,6 @@ export type UpdateListingInput = {
   title: string;
   weightKg: number;
   priceNgn: number | null;
-  status: ListingStatus;
   photoUrl: string | null;
   photoUrls: string[];
   zone?: string;
@@ -299,7 +298,6 @@ export async function updateOwnedListing(
     title: input.title.trim(),
     weight_kg: input.weightKg,
     price_ngn: input.priceNgn,
-    status: input.status,
     photo_url: cover,
     photo_urls: extras,
   };
@@ -320,7 +318,7 @@ export async function deleteOwnedListing(listingId: string, sellerId: string) {
 
   if (row.status === "Reserved" || row.status === "Sold") {
     throw new Error(
-      "Reserved or sold listings can’t be deleted (exchange history). Set status to Live or Draft only if the deal is cancelled, or leave it for records."
+      "Reserved or sold listings can’t be deleted (exchange history). Contact support if the deal needs review."
     );
   }
 
