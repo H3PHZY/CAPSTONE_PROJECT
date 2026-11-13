@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import json
 from decimal import Decimal
 from datetime import timedelta
 from pathlib import Path
@@ -64,6 +67,20 @@ class EcoLoopAPITestCase(TestCase):
         self.buyer_profile.cluster = "Ikeja"
         self.buyer_profile.buys = True
         self.buyer_profile.save()
+
+    def post_paystack_webhook(self, event, secret, signature=None):
+        body = json.dumps(event).encode("utf-8")
+        signature = signature or hmac.new(
+            secret.encode("utf-8"),
+            body,
+            hashlib.sha512,
+        ).hexdigest()
+        return self.client.post(
+            "/api/pay/webhook/",
+            body,
+            content_type="application/json",
+            HTTP_X_PAYSTACK_SIGNATURE=signature,
+        )
 
     def test_pilot_trust_verification(self):
         """Test that profile with business name, phone, and buy/sell role gets verified."""
@@ -949,6 +966,93 @@ class EcoLoopAPITestCase(TestCase):
                             "ECO-TEST",
                             Decimal("25000.00"),
                         )
+
+    @override_settings(PAYSTACK_SECRET_KEY="sk_test_webhook")
+    def test_paystack_webhook_valid_signature_fulfils_transaction_once(self):
+        listing = Listing.objects.create(
+            seller=self.seller,
+            title="Webhook payment",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            price_ngn=Decimal("25000.00"),
+            status=ListingStatus.RESERVED,
+        )
+        txn = Transaction.objects.create(
+            listing=listing,
+            buyer=self.buyer,
+            seller=self.seller,
+            status=TransactionStatus.RESERVED,
+            payment_ref="ECO-WEBHOOK-VALID",
+            amount_ngn=Decimal("25000.00"),
+            currency="NGN",
+        )
+        event = {
+            "event": "charge.success",
+            "data": {"reference": txn.payment_ref},
+        }
+        with patch("api.views.verify_paystack_transaction") as verify:
+            response = self.post_paystack_webhook(event, "sk_test_webhook")
+
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(response.data, {"received": True, "listingId": str(listing.pk)})
+            txn.refresh_from_db()
+            listing.refresh_from_db()
+            self.assertEqual(txn.status, TransactionStatus.COMPLETED)
+            self.assertIsNotNone(txn.paid_at)
+            self.assertIsNotNone(txn.completed_at)
+            self.assertEqual(listing.status, ListingStatus.SOLD)
+            self.assertTrue(CarbonRecord.objects.filter(transaction=txn).exists())
+            completed_at = txn.completed_at
+            paid_at = txn.paid_at
+
+            replay = self.post_paystack_webhook(event, "sk_test_webhook")
+
+        self.assertEqual(replay.status_code, status.HTTP_200_OK)
+        self.assertEqual(replay.data, {"received": True, "already_processed": True})
+        txn.refresh_from_db()
+        self.assertEqual(txn.completed_at, completed_at)
+        self.assertEqual(txn.paid_at, paid_at)
+        self.assertEqual(CarbonRecord.objects.filter(transaction=txn).count(), 1)
+        verify.assert_called_once_with(txn.payment_ref, Decimal("25000.00"))
+
+    @override_settings(PAYSTACK_SECRET_KEY="sk_test_webhook")
+    def test_paystack_webhook_rejects_invalid_signature_without_fulfilling(self):
+        listing = Listing.objects.create(
+            seller=self.seller,
+            title="Webhook invalid signature",
+            material=MaterialCategory.METAL,
+            weight_kg=Decimal("10.00"),
+            price_ngn=Decimal("25000.00"),
+            status=ListingStatus.RESERVED,
+        )
+        txn = Transaction.objects.create(
+            listing=listing,
+            buyer=self.buyer,
+            seller=self.seller,
+            status=TransactionStatus.RESERVED,
+            payment_ref="ECO-WEBHOOK-INVALID",
+            amount_ngn=Decimal("25000.00"),
+            currency="NGN",
+        )
+        event = {
+            "event": "charge.success",
+            "data": {"reference": txn.payment_ref},
+        }
+        with patch("api.views.verify_paystack_transaction") as verify:
+            response = self.post_paystack_webhook(
+                event,
+                "sk_test_webhook",
+                signature="invalid-signature",
+            )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        txn.refresh_from_db()
+        listing.refresh_from_db()
+        self.assertEqual(txn.status, TransactionStatus.RESERVED)
+        self.assertIsNone(txn.paid_at)
+        self.assertEqual(listing.status, ListingStatus.RESERVED)
+        self.assertFalse(CarbonRecord.objects.filter(transaction=txn).exists())
+        verify.assert_not_called()
 
     def test_haversine_distance_calculation(self):
         """Test accurate Haversine distance between Ogba and Ikeja clusters."""

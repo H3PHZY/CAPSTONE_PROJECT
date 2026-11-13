@@ -95,3 +95,7 @@ sequenceDiagram
 | Non-functional | Production transport uses HTTPS security settings and exact frontend origins | Django deployment settings | `python manage.py check --deploy` with production environment variables |
 | Non-functional | A sleeping API can be monitored without database access | `/api/health/` | `test_health_endpoint_does_not_require_authentication` |
 | Non-functional | Backend and frontend changes are checked on each push and pull request | GitHub Actions | `.github/workflows/ci.yml` |
+
+## Coverage notes
+
+The latest backend coverage run reported 82% overall coverage. Coverage remains notably lower in `api/classify.py` (17%), `api/permissions.py` (45%), and `api/views.py` (67%). These modules need additional provider, permission-matrix, and endpoint-branch tests; passing the current suite does not imply those paths are comprehensively covered.

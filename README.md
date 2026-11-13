@@ -123,7 +123,17 @@ The free Render PostgreSQL database expires 30 days after creation. Download and
 
 ## Media field audit
 
-The frontend reads listing `photo_url` for the cover and `photo_urls` for the gallery; the API's `photo` upload field is still used by the listing gallery upload action. The profile UI writes and reads `avatar_url`; `avatar` remains a backend fallback but is not currently uploaded by the frontend. Messaging writes `image_url` with the stored attachment URL and reads legacy `attachment` as a fallback; the frontend does not write the model `attachment` field directly. These fields are retained for compatibility and existing stored media. A cleanup should first migrate old file/URL data and version the API; removing them now could break historical listing galleries, profile avatars, or message attachments.
+| Field | Frontend usage | Cleanup decision |
+|---|---|---|
+| `Listing.photo` | Not used for normal listing creation; the gallery-upload API action stores extra photos here, and serializers expose its URL. | Retain while the gallery action and old uploads depend on it. |
+| `Listing.photo_url` | Used for the listing cover and as the single-photo fallback. | Retain; it is part of the current API contract and existing listings. |
+| `Listing.photo_urls` | Used for listing galleries. | Retain; removing it would lose gallery behavior and historical URLs. |
+| `Profile.avatar` | Not uploaded directly by the current UI; the API/model can still return it as a legacy fallback. | Retain until stored image files are migrated and the fallback is versioned out. |
+| `Profile.avatar_url` | Written by the profile UI and used to display the profile avatar. | Retain; it is the active profile-avatar field. |
+| `Message.image_url` | Written by the messaging UI for uploaded attachments and displayed in chat. | Retain; it is the active message attachment URL. |
+| `Message.attachment` | Not written by the current UI; read as a legacy fallback for existing uploads. | Retain until existing attachment data is migrated and the fallback is versioned out. |
+
+No field can be safely removed without a data migration and a coordinated API change; `photo`, `avatar`, and `attachment` still serve upload or backward-compatibility paths.
 
 ## Project structure
 
