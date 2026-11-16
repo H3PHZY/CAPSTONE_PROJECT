@@ -35,15 +35,8 @@ export function AuthModal() {
   if (!authOpen || typeof document === "undefined") return null;
 
   async function handleSuccess(email: string, password: string, signup?: SignupProfile) {
-    let next = pendingPath && pendingPath !== "/" ? pendingPath : "/dashboard";
+    const next = pendingPath && pendingPath !== "/" ? pendingPath : "/dashboard";
     await login(email, password, signup);
-    if (next.startsWith("/impact")) {
-      const enabled =
-        signup && Object.prototype.hasOwnProperty.call(signup, "carbonImpact")
-          ? Boolean(signup.carbonImpact)
-          : undefined;
-      if (enabled === false) next = "/dashboard";
-    }
     window.dispatchEvent(new CustomEvent("ecoloop-auth-success", { detail: { path: next } }));
   }
 

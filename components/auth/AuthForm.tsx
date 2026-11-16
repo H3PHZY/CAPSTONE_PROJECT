@@ -260,7 +260,7 @@ export function AuthForm({
                   checked={carbonImpact}
                   onChange={(e) => setCarbonImpact(e.target.checked)}
                 />
-                Show me the Carbon impact page — track CO₂e diverted from my exchanges (optional)
+                Show my carbon snapshot on the dashboard — track CO₂e diverted from my exchanges (optional)
               </label>
               <label className="check-label check-label--block">
                 <input

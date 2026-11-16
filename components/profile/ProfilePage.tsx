@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Select } from "@/components/ui/Select";
 import { ProfileAvatar } from "@/components/ui/ProfileAvatar";
@@ -171,8 +170,8 @@ export function ProfilePage() {
       });
       setImpactMsg(
         carbonImpact
-          ? "Carbon impact is on — you’ll see it in the navigation."
-          : "Carbon impact is off — the page is hidden from your navigation."
+          ? "Your carbon snapshot will appear on the dashboard."
+          : "Your carbon snapshot is hidden from the dashboard."
       );
     } catch (err) {
       setImpactErr(err instanceof Error ? err.message : "Could not save preference");
@@ -285,7 +284,7 @@ export function ProfilePage() {
           <div className="profile-hero-meta">
             {user.email || "No email"} · {cluster}
             {profile?.verified ? " · Verified seller" : " · Not verified yet"}
-            {carbonImpact ? " · Carbon impact on" : ""}
+            {carbonImpact ? " · Carbon snapshot on" : ""}
           </div>
           <div className="profile-avatar-actions">
             <input
@@ -494,14 +493,14 @@ export function ProfilePage() {
           <div className="panel-label">OPTIONAL · CARBON IMPACT</div>
           <h2 className="profile-impact-optin-title">Track CO₂e from your exchanges</h2>
           <p className="profile-impact-optin-lede">
-            Opt in to unlock a private Carbon impact page. EcoLoop estimates how much CO₂e each
-            completed exchange keeps out of landfill using LCA reference factors. Figures are
-            estimates for feedback — not certified carbon offsets.
+            EcoLoop estimates how much CO₂e each completed exchange keeps out of landfill using
+            LCA reference factors. Figures are estimates for feedback — not certified carbon
+            offsets.
           </p>
           <ul className="profile-impact-optin-points">
-            <li>See diverted tonnes and CO₂e for your completed deals</li>
-            <li>Carbon impact appears in your navigation when enabled</li>
-            <li>You can turn this off any time — marketplace and messaging still work</li>
+            <li>Show your diverted CO₂e estimate on the dashboard</li>
+            <li>Keep the estimate private to your account</li>
+            <li>You can turn this off at any time</li>
           </ul>
         </div>
         <div className="profile-impact-optin-aside">
@@ -515,8 +514,8 @@ export function ProfilePage() {
               <strong>{carbonImpact ? "Opted in" : "Opt in"}</strong>
               <span className="profile-impact-toggle-sub">
                 {carbonImpact
-                  ? "Carbon impact page is available in nav"
-                  : "Enable the Carbon impact page"}
+                  ? "Carbon snapshot is shown on your dashboard"
+                  : "Show your carbon snapshot on the dashboard"}
               </span>
             </span>
           </label>
@@ -534,11 +533,6 @@ export function ProfilePage() {
             <button type="submit" className="btn btn-primary" disabled={savingImpact}>
               {savingImpact ? "Saving…" : "Save preference"}
             </button>
-            {carbonImpact ? (
-              <Link href="/impact" className="btn btn-outline">
-                Open Carbon impact
-              </Link>
-            ) : null}
           </div>
         </div>
       </form>

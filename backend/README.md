@@ -102,6 +102,9 @@ This Django REST API powers the **EcoLoop** industrial waste redistribution mark
    Copy-Item .env.example .env
    # Set the required database and API credentials in .env
    ```
+   Set `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, and `CLOUDINARY_API_SECRET` from your
+   Cloudinary console in `backend/.env`; configure the same values in Render for production.
+   Django uses Cloudinary storage when all three are set and local filesystem storage otherwise.
 
 5. **Apply database migrations**:
    ```bash

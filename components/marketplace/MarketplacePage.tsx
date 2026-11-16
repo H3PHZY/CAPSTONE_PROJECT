@@ -3,10 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Select } from "@/components/ui/Select";
-import {
-  GoogleMapLocationPicker,
-  type SelectedLocation,
-} from "@/components/marketplace/GoogleMapLocationPicker";
 import { useAuth } from "@/lib/auth-context";
 import {
   CATS,
@@ -26,11 +22,14 @@ const EMPTY_LISTINGS: Listing[] = [];
 
 export function MarketplacePage() {
   const { profile } = useAuth();
-  const [viewerLocation, setViewerLocation] = useState<SelectedLocation>({
-    address: "",
-    lat: null,
-    lng: null,
-  });
+  const viewerLocation = useMemo(
+    () => ({
+      address: profile?.address || "",
+      lat: profile?.lat ?? null,
+      lng: profile?.lng ?? null,
+    }),
+    [profile?.address, profile?.lat, profile?.lng]
+  );
   const [q, setQ] = useState("");
   const [radius, setRadius] = useState<RadiusOption>("Within 10 km");
   const [cat, setCat] = useState<MaterialCategory | "All categories">("All categories");
@@ -41,45 +40,18 @@ export function MarketplacePage() {
     listings: Listing[];
     error: string | null;
   } | null>(null);
-  const [appliedProfileKey, setAppliedProfileKey] = useState<string | null>(null);
-  const profileKey = profile
-    ? JSON.stringify([
-        profile.id,
-        profile.address,
-        profile.lat,
-        profile.lng,
-      ])
-    : null;
-  if (profile && profileKey !== appliedProfileKey) {
-    setViewerLocation({
-      address: profile.address || "",
-      lat: profile.lat,
-      lng: profile.lng,
-    });
-    setAppliedProfileKey(profileKey);
-  }
-  const unresolvedSearchLocation = Boolean(
-    viewerLocation.address.trim() &&
-      (viewerLocation.lat == null || viewerLocation.lng == null)
-  );
   const requestKey = JSON.stringify([
     profile?.cluster,
     viewerLocation.lat,
     viewerLocation.lng,
-    unresolvedSearchLocation,
   ]);
   const currentListingResult =
-    !unresolvedSearchLocation && listingResult?.key === requestKey
-      ? listingResult
-      : null;
+    listingResult?.key === requestKey ? listingResult : null;
   const listings = currentListingResult?.listings ?? EMPTY_LISTINGS;
   const error = currentListingResult?.error ?? null;
-  const loading = Boolean(!unresolvedSearchLocation && !currentListingResult);
-  const searchLoading = loading && !unresolvedSearchLocation;
+  const loading = Boolean(!currentListingResult);
 
   useEffect(() => {
-    if (unresolvedSearchLocation) return;
-
     let active = true;
     void fetchLiveListings(profile?.cluster, viewerLocation)
       .then((rows) => {
@@ -101,11 +73,9 @@ export function MarketplacePage() {
     requestKey,
     profile?.cluster,
     viewerLocation,
-    unresolvedSearchLocation,
   ]);
 
   const list = useMemo(() => {
-    if (unresolvedSearchLocation) return [];
     const max = RADII[radius] ?? 999;
     const query = q.trim().toLowerCase();
     let filtered: Listing[] = listings.filter(
@@ -125,7 +95,7 @@ export function MarketplacePage() {
       filtered = [...filtered].sort((a, b) => a.distance - b.distance);
     }
     return filtered;
-  }, [listings, q, radius, cat, sort, verifiedOnly, unresolvedSearchLocation]);
+  }, [listings, q, radius, cat, sort, verifiedOnly]);
 
   const chips: { label: string; v: MaterialCategory | "All categories" }[] = [
     { label: "All", v: "All categories" },
@@ -174,14 +144,6 @@ export function MarketplacePage() {
           />
         </div>
 
-        <div className="filter-location">
-          <GoogleMapLocationPicker
-            value={viewerLocation}
-            zone={profile?.cluster || "Ogba"}
-            onChange={setViewerLocation}
-          />
-        </div>
-
         <div className="filter-chips-row">
           <span className="filter-chips-label">QUICK FILTER</span>
           {chips.map((c) => (
@@ -210,7 +172,7 @@ export function MarketplacePage() {
         <div>
           <h1 className="page-title">Available materials near you</h1>
           <div className="page-sub">
-            {searchLoading
+            {loading
               ? "Loading listings…"
               : `${list.length} listings · ${cat.toLowerCase()} · ${radius.toLowerCase()} of ${viewerLocation.address || profile?.cluster || "Ogba"}`}
           </div>
@@ -221,13 +183,7 @@ export function MarketplacePage() {
         </div>
       </div>
 
-      {unresolvedSearchLocation ? (
-        <div className="upload-error">
-          Find the search address on the map to apply this location.
-        </div>
-      ) : error ? (
-        <div className="upload-error">{error}</div>
-      ) : null}
+      {error ? <div className="upload-error">{error}</div> : null}
 
       <div className="market-grid">
         {list.map((L) => (
@@ -235,27 +191,19 @@ export function MarketplacePage() {
         ))}
       </div>
 
-      {(!loading || unresolvedSearchLocation) && list.length === 0 ? (
+      {!loading && list.length === 0 ? (
         <div className="empty-state">
           <div className="empty-title">
-            {viewerLocation.address.trim() &&
-            (viewerLocation.lat == null || viewerLocation.lng == null)
-              ? "Resolve this location first"
-              : listings.length === 0
+            {listings.length === 0
               ? "No live listings yet"
               : "No listings match this filter"}
           </div>
           <div className="empty-sub">
-            {viewerLocation.address.trim() &&
-            (viewerLocation.lat == null || viewerLocation.lng == null)
-              ? "Select Find on map to apply the address as your search origin."
-              : listings.length === 0
+            {listings.length === 0
               ? "Be the first to publish surplus material from Quick listing."
               : "Widen the proximity / category filters, or clear them."}
           </div>
-          {listings.length === 0 &&
-          !(viewerLocation.address.trim() &&
-            (viewerLocation.lat == null || viewerLocation.lng == null)) ? (
+          {listings.length === 0 ? (
             <Link href="/listings/new" className="btn btn-primary">
               List a material
             </Link>

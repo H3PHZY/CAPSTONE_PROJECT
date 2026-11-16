@@ -6,7 +6,4 @@ export const NAV_LINKS = [
   { href: "/listings/mine", label: "My listings" },
   { href: "/messages", label: "Messages" },
   { href: "/transactions", label: "Transactions" },
-  { href: "/impact", label: "Carbon impact", feature: "carbonImpact" as const },
 ] as const;
-
-export type NavFeature = "carbonImpact";
