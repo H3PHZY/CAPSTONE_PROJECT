@@ -2,6 +2,12 @@
 
 EcoLoop is an industrial-waste marketplace for manufacturers in Lagos. Sellers publish surplus material, buyers search nearby listings and message sellers, and completed exchanges record estimated carbon savings.
 
+## Links
+
+- Video demo: https://www.youtube.com/watch?v=w7FzwgZITX0
+- Live app: https://ecoloop-hephzibah1.vercel.app/
+- Technical report: [EcoLoop_Technical_Report.pdf](./EcoLoop_Technical_Report.pdf)
+
 ## Stack
 
 - Frontend: Next.js 16, React 19, TypeScript

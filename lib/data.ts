@@ -34,11 +34,11 @@ export const RADII: Record<RadiusOption, number> = {
 export const FAQS: Faq[] = [
   {
     q: "Is it free to list?",
-    a: "Yes. Listing, AI classification and SME messaging are 100% free for the full six-week pilot. There is zero platform commission. When deals are agreed, payments are securely processed and verified end-to-end via our integrated payment gateway.",
+    a: "Yes. Listing, AI classification and SME messaging are 100% free for the full six-week pilot. There is zero platform commission.",
   },
   {
     q: "How are payments handled?",
-    a: "All transactions are processed securely through our integrated Paystack gateway. When a buyer purchases a lot, payments are verified in real time, locking the material and recording the transaction automatically without needing to manually share bank details.",
+    a: "When a deal is agreed, Paystack securely processes the buyer's payment. Django verifies the payment before the exchange can be completed.",
   },
   {
     q: "How accurate is the AI classification?",
@@ -171,7 +171,7 @@ export const THREADS: Thread[] = [
     name: "Loop Recyclers",
     subject: "ECL-0141 · Aluminium offcuts",
     time: "12:12",
-    preview: "Agreed. Sending the transfer reference now…",
+    preview: "Agreed. I will pay through the Paystack checkout…",
   },
   {
     name: "Alafia Packaging",
@@ -211,12 +211,12 @@ export const INITIAL_MSGS: ChatMessage[] = [
   },
   {
     me: true,
-    text: "That works. Gate opens 8am, ask for Tunde at the loading bay. Payment on collection by transfer.",
+    text: "That works. Gate opens 8am, ask for Tunde at the loading bay. Payment is handled securely through Paystack once we reserve the deal.",
     time: "12:11",
   },
   {
     me: false,
-    text: "Agreed. Sending the transfer reference now — please mark the listing as reserved for us.",
+    text: "Agreed. Please reserve the listing for us and I will pay through the Paystack checkout.",
     time: "12:12",
   },
 ];
@@ -270,8 +270,8 @@ export const TXNS: Txn[] = [
 export const QUICK_REPLIES = [
   "Still available",
   "Send pickup address",
-  "Here are my transfer details",
-  "Payment proof attached",
+  "Pickup time confirmed",
+  "I will pay through Paystack",
 ] as const;
 
 export const PICKUP_LOCATIONS = [
