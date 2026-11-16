@@ -17,7 +17,6 @@ import {
 import type { ListingStatus } from "@/lib/types";
 
 const MAX_PHOTOS = 6;
-const STATUS_OPTIONS: ListingStatus[] = ["Live", "Draft", "Reserved", "Sold"];
 
 interface ManageListingPageProps {
   id: string;
@@ -28,7 +27,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
   const { ready, user, openAuth } = useAuth();
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const [loading, setLoading] = useState(true);
+  const [loadedRequestKey, setLoadedRequestKey] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -44,6 +43,8 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [extraUrls, setExtraUrls] = useState<string[]>([]);
   const [activePhoto, setActivePhoto] = useState<string | null>(null);
+  const requestKey = ready && user ? `${id}:${user.id}` : null;
+  const loading = Boolean(requestKey && loadedRequestKey !== requestKey);
 
   const gallery = [coverUrl, ...extraUrls].filter(
     (u): u is string => Boolean(u && u.trim())
@@ -64,9 +65,6 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
     }
 
     let active = true;
-    setLoading(true);
-    setError(null);
-
     void fetchOwnedListing(id, user.id)
       .then((row) => {
         if (!active) return;
@@ -74,6 +72,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
           setError("Listing not found, or you are not the seller.");
           return;
         }
+        setError(null);
         const photos = listingPhotoGallery(row);
         setTitle(row.title);
         setWeight(String(row.weight_kg));
@@ -94,13 +93,13 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
         setError(err instanceof Error ? err.message : "Could not load listing");
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) setLoadedRequestKey(requestKey);
       });
 
     return () => {
       active = false;
     };
-  }, [ready, user, id, openAuth, router]);
+  }, [ready, user, id, openAuth, router, requestKey]);
 
   async function onAddPhotos(files: FileList | null) {
     if (!user || !files?.length) return;
@@ -193,11 +192,10 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
 
     setSaving(true);
     try {
-      const updated = await updateOwnedListing(id, user.id, {
+      const updated = await updateOwnedListing(id, {
         title,
         weightKg,
         priceNgn,
-        status,
         photoUrl: coverUrl,
         photoUrls: extraUrls,
         zone,
@@ -207,14 +205,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
       setExtraUrls(photos.slice(1));
       setMsg("Listing updated.");
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not save listing";
-      if (/photo_urls/i.test(message) || /column/i.test(message)) {
-        setError(
-          "Run supabase/migrations/008_listing_photo_urls.sql in the Supabase SQL Editor, then try again."
-        );
-      } else {
-        setError(message);
-      }
+      setError(err instanceof Error ? err.message : "Could not save listing");
     } finally {
       setSaving(false);
     }
@@ -225,7 +216,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
     const locked = status === "Reserved" || status === "Sold";
     if (locked) {
       setError(
-        "Reserved or sold listings can’t be deleted. Change status only if the deal fell through, or keep the record."
+        "Reserved or sold listings can’t be deleted. Contact support if the deal needs review."
       );
       return;
     }
@@ -307,6 +298,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
                 className="input"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                disabled={status === "Reserved" || status === "Sold"}
                 required
               />
             </div>
@@ -318,6 +310,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
                   className="input input--mono"
                   value={weight}
                   onChange={(e) => setWeight(e.target.value)}
+                  disabled={status === "Reserved" || status === "Sold"}
                   required
                 />
               </div>
@@ -327,6 +320,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
                   className="input input--mono"
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
+                  disabled={status === "Reserved" || status === "Sold"}
                   placeholder="52,000"
                 />
               </div>
@@ -340,16 +334,12 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
                   options={zoneOptions}
                   onChange={setZone}
                   aria-label="Pickup zone"
+                  disabled={status === "Reserved" || status === "Sold"}
                 />
               </div>
               <div>
                 <label className="field-label">Status</label>
-                <Select
-                  value={status}
-                  options={STATUS_OPTIONS}
-                  onChange={(v) => setStatus(v as ListingStatus)}
-                  aria-label="Listing status"
-                />
+                <div className="input" aria-live="polite">{status}</div>
               </div>
             </div>
 
@@ -360,7 +350,13 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
               </div>
             ) : null}
 
-            <button type="submit" className="btn btn-primary" disabled={saving || uploading || deleting}>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={
+                saving || uploading || deleting || status === "Reserved" || status === "Sold"
+              }
+            >
               {saving ? "Saving…" : "Save changes"}
             </button>
           </div>
@@ -444,6 +440,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
             accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
             multiple
             hidden
+            disabled={status === "Reserved" || status === "Sold"}
             onChange={(e) => void onAddPhotos(e.target.files)}
           />
         </div>
@@ -457,7 +454,7 @@ export function ManageListingPage({ id }: ManageListingPageProps) {
         </p>
         {status === "Reserved" || status === "Sold" ? (
           <div className="field-foot" style={{ marginTop: 8 }}>
-            Status is {status} — delete is locked.
+            Status is {status} — editing and deletion are locked.
           </div>
         ) : null}
         <button

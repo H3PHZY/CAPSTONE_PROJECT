@@ -34,7 +34,11 @@ export const RADII: Record<RadiusOption, number> = {
 export const FAQS: Faq[] = [
   {
     q: "Is it free to list?",
-    a: "Yes. Listing, classification and messaging are free for the full six-week pilot, with no commission. Once a deal is reserved and priced, buyers pay securely through Paystack; EcoLoop confirms payment automatically before the exchange can be completed.",
+    a: "Yes. Listing, AI classification and SME messaging are 100% free for the full six-week pilot. There is zero platform commission.",
+  },
+  {
+    q: "How are payments handled?",
+    a: "When a deal is agreed, Paystack securely processes the buyer's payment. Django verifies the payment before the exchange can be completed.",
   },
   {
     q: "How accurate is the AI classification?",

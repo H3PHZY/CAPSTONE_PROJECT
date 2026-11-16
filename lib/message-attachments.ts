@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { uploadDjangoMedia } from "@/lib/django-api";
 
 export const MESSAGE_ATTACHMENTS_BUCKET = "message-attachments";
 export const MAX_MESSAGE_ATTACHMENT_BYTES = 12 * 1024 * 1024;
@@ -53,18 +53,6 @@ export function mimeFromFileName(name: string): string | null {
   return EXT_MIME[ext] ?? null;
 }
 
-function extensionFor(file: File): string {
-  const fromName = file.name.split(".").pop()?.toLowerCase();
-  if (fromName && EXT_MIME[fromName]) {
-    return fromName === "jpeg" ? "jpg" : fromName;
-  }
-  if (file.type === "image/png") return "png";
-  if (file.type === "image/webp") return "webp";
-  if (file.type === "image/gif") return "gif";
-  if (file.type === "application/pdf") return "pdf";
-  return "bin";
-}
-
 export function validateMessageAttachment(file: File): string | null {
   const mime = file.type || mimeFromFileName(file.name) || "";
   const okMime = ALLOWED_MIME.has(mime) || ALLOWED_MIME.has(file.type);
@@ -91,26 +79,17 @@ export function fileKindLabel(mime: string | null | undefined, name?: string | n
 
 /** Upload to `message-attachments/{userId}/{uuid}.ext` */
 export async function uploadMessageAttachment(
-  userId: string,
+  _userId: string,
   file: File
 ): Promise<UploadedMessageAttachment> {
   const validationError = validateMessageAttachment(file);
   if (validationError) throw new Error(validationError);
 
   const mime = file.type || mimeFromFileName(file.name) || "application/octet-stream";
-  const path = `${userId}/${crypto.randomUUID()}.${extensionFor(file)}`;
-  const { error } = await supabase.storage.from(MESSAGE_ATTACHMENTS_BUCKET).upload(path, file, {
-    cacheControl: "3600",
-    upsert: false,
-    contentType: mime,
-  });
-
-  if (error) throw error;
-
-  const { data } = supabase.storage.from(MESSAGE_ATTACHMENTS_BUCKET).getPublicUrl(path);
+  const uploaded = await uploadDjangoMedia(file, "message-attachment");
   return {
-    path,
-    publicUrl: data.publicUrl,
+    path: uploaded.path,
+    publicUrl: uploaded.url,
     name: file.name,
     mime,
   };

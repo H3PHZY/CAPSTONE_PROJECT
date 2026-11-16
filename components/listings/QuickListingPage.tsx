@@ -4,10 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Select } from "@/components/ui/Select";
 import { useAuth } from "@/lib/auth-context";
+import {
+  GoogleMapLocationPicker,
+  type SelectedLocation,
+} from "@/components/marketplace/GoogleMapLocationPicker";
 import { co2FromWeight } from "@/lib/carbon";
 import { CATS, PICKUP_LOCATIONS } from "@/lib/data";
 import { uploadListingPhoto } from "@/lib/listing-photos";
 import { createLiveListing, parsePriceNgn } from "@/lib/listings";
+import { getPublishLocation } from "@/lib/listing-location";
+import { djangoRequest } from "@/lib/django-api";
 import type { MaterialCategory } from "@/lib/types";
 
 const STEP_DEFS = [
@@ -31,7 +37,7 @@ type ClassifyResponse = {
 };
 
 export function QuickListingPage() {
-  const { user, isAuthenticated, openAuth } = useAuth();
+  const { user, profile, isAuthenticated, openAuth } = useAuth();
   const [stage, setStage] = useState<Stage>("idle");
   const [scanPct, setScanPct] = useState(0);
   const [aiLabel, setAiLabel] = useState<MaterialCategory>("Metal");
@@ -46,18 +52,47 @@ export function QuickListingPage() {
   const [weight, setWeight] = useState("180");
   const [price, setPrice] = useState("52,000");
   const [pickup, setPickup] = useState<string>(PICKUP_LOCATIONS[0]);
+  const [location, setLocation] = useState<SelectedLocation>({
+    address: "",
+    lat: null,
+    lng: null,
+  });
   const [published, setPublished] = useState(false);
+  const [savedAsDraft, setSavedAsDraft] = useState(false);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
   const [photoPath, setPhotoPath] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [locationNotice, setLocationNotice] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [savingDraft, setSavingDraft] = useState(false);
   const [publishedId, setPublishedId] = useState<string | null>(null);
+  const [appliedProfileKey, setAppliedProfileKey] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const scanRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const doneRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewObjectUrl = useRef<string | null>(null);
+
+  const profileKey = profile
+    ? JSON.stringify([
+        profile.id,
+        profile.zone,
+        profile.cluster,
+        profile.address,
+        profile.lat,
+        profile.lng,
+      ])
+    : null;
+  if (profile && profileKey !== appliedProfileKey) {
+    setPickup(profile.zone || profile.cluster || PICKUP_LOCATIONS[0]);
+    setLocation({
+      address: profile.address || "",
+      lat: profile.lat,
+      lng: profile.lng,
+    });
+    setAppliedProfileKey(profileKey);
+  }
 
   useEffect(() => {
     return () => {
@@ -91,15 +126,10 @@ export function QuickListingPage() {
   async function classifyPhoto(publicUrl: string) {
     setClassifying(true);
     try {
-      const res = await fetch("/api/classify", {
+      const data = await djangoRequest<ClassifyResponse>("/classify/", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ imageUrl: publicUrl }),
       });
-      const data = (await res.json()) as ClassifyResponse;
-      if (!res.ok) {
-        throw new Error(data.error || "Classification failed");
-      }
       setAiLabel(data.material);
       setAiConfidence(data.confidencePct);
       setAiAlts(
@@ -222,6 +252,7 @@ export function QuickListingPage() {
     setStage("idle");
     setScanPct(0);
     setPublished(false);
+    setSavedAsDraft(false);
     setOverridden(false);
     setOverride("Metal");
     setAiLabel("Metal");
@@ -234,6 +265,7 @@ export function QuickListingPage() {
     setUploadError(null);
     setUploading(false);
     setPublishing(false);
+    setSavingDraft(false);
     setPublishedId(null);
     setPhotoUrl(null);
     setPhotoPath(null);
@@ -244,7 +276,7 @@ export function QuickListingPage() {
     }
   }
 
-  async function publish() {
+  async function submitListing(asDraft: boolean) {
     if (!isAuthenticated || !user) {
       openAuth("login", "/listings/new");
       return;
@@ -262,9 +294,15 @@ export function QuickListingPage() {
       setUploadError("Add a listing title.");
       return;
     }
-
     setUploadError(null);
+    const publishLocation = getPublishLocation(location, pickup);
+    setLocationNotice(
+      !publishLocation.usedZoneDefault || !location.address.trim()
+        ? null
+        : "Geocoding is unavailable, so this listing will use the selected pickup zone as its approximate location."
+    );
     setPublishing(true);
+    setSavingDraft(asDraft);
     try {
       const listing = await createLiveListing({
         sellerId: user.id,
@@ -274,17 +312,23 @@ export function QuickListingPage() {
         priceNgn: parsePriceNgn(price),
         photoUrl,
         zone: pickup,
+        address: publishLocation.address,
+        lat: publishLocation.lat,
+        lng: publishLocation.lng,
         predictedMaterial: aiLabel,
         confidence: Math.max(0.01, Math.min(1, aiConfidence / 100 || 0.5)),
         overridden,
         modelId: aiModelId,
+        isDraft: asDraft,
       });
       setPublishedId(listing.id);
+      setSavedAsDraft(asDraft);
       setPublished(true);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : "Could not publish listing.");
     } finally {
       setPublishing(false);
+      setSavingDraft(false);
     }
   }
 
@@ -324,13 +368,18 @@ export function QuickListingPage() {
       {published ? (
         <div className="publish-success">
           <div className="publish-check">✓</div>
-          <h2 className="publish-title">Listing published</h2>
+          <h2 className="publish-title">
+            {savedAsDraft ? "Draft saved" : "Listing published"}
+          </h2>
           <p className="publish-copy">
-            Your material is now visible to 9 verified buyers within 10 km of {pickup}. You will
-            be notified the moment a buyer initiates contact.
+            {savedAsDraft
+              ? "Your listing is saved privately as a draft. Publish it from My Listings when it is ready."
+              : `Your material is now visible to buyers in ${pickup}. You will be notified the moment a buyer initiates contact.`}
           </p>
           <p className="publish-copy publish-copy--mono">
-            Saved to Supabase · listing is Live in the marketplace.
+            {savedAsDraft
+              ? "Saved to EcoLoop · listing is not visible in the marketplace."
+              : "Saved to EcoLoop · listing is Live in the marketplace."}
           </p>
           <div className="publish-actions">
             {publishedId ? (
@@ -338,9 +387,11 @@ export function QuickListingPage() {
                 <Link href={`/listings/${publishedId}/manage`} className="btn btn-primary">
                   Manage listing &amp; photos
                 </Link>
-                <Link href={`/marketplace/${publishedId}`} className="btn btn-outline">
-                  View listing
-                </Link>
+                {!savedAsDraft ? (
+                  <Link href={`/marketplace/${publishedId}`} className="btn btn-outline">
+                    View listing
+                  </Link>
+                ) : null}
               </>
             ) : null}
             <Link href="/listings/mine" className="btn btn-outline">
@@ -554,6 +605,19 @@ export function QuickListingPage() {
                   />
                   <div className="field-foot">Saved from your profile · select to change</div>
                 </div>
+                <GoogleMapLocationPicker
+                  value={location}
+                  zone={pickup}
+                  onChange={(nextLocation) => {
+                    setLocation(nextLocation);
+                    setLocationNotice(null);
+                  }}
+                />
+                {locationNotice ? (
+                  <div className="field-foot" role="status">
+                    {locationNotice}
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -566,17 +630,25 @@ export function QuickListingPage() {
             </div>
 
             <div className="panel panel--pad">
-              <div className="panel-label">3 · PUBLISH</div>
+              <div className="panel-label">3 · SAVE OR PUBLISH</div>
+              <button
+                type="button"
+                className="btn btn-outline btn-lg btn-block"
+                onClick={() => void submitListing(true)}
+                disabled={uploading || publishing || stage !== "done" || !photoUrl}
+              >
+                {savingDraft ? "Saving draft…" : "Save as draft"}
+              </button>
               <button
                 type="button"
                 className="btn btn-primary btn-lg btn-block"
-                onClick={publish}
+                onClick={() => void submitListing(false)}
                 disabled={uploading || publishing || stage !== "done" || !photoUrl}
               >
-                {publishing ? "Publishing…" : "Publish listing"}
+                {publishing && !savingDraft ? "Publishing…" : "Publish listing"}
               </button>
               <div className="field-foot">
-                Publishes a Live listing to Supabase with your photo and details.
+                Save a private draft or publish your photo and listing details to the EcoLoop marketplace.
               </div>
             </div>
           </div>

@@ -3,18 +3,20 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { formatPriceNgn } from "@/lib/listings";
 import {
   fetchMyTransactions,
+  formatTransactionAmount,
   transactionRef,
   type TransactionView,
 } from "@/lib/transactions";
+import { djangoDisputes, type DjangoDispute } from "@/lib/django-api";
+import { canRaiseDispute } from "@/lib/disputes";
 
 type RoleFilter = "all" | "buying" | "selling";
 
 function payLabel(t: TransactionView) {
   if (t.paidAt) return "Paid";
-  if (t.status === "Reserved" && t.priceNgn && t.priceNgn > 0) return "Unpaid";
+  if (t.status === "Reserved" && t.amountNgn && t.amountNgn > 0) return "Unpaid";
   if (t.status === "Completed") return "—";
   return "—";
 }
@@ -23,41 +25,113 @@ function statusClass(status: string) {
   return `status-pill status-pill--${status.toLowerCase()}`;
 }
 
+const EMPTY_TRANSACTIONS: TransactionView[] = [];
+
 export function TransactionsPage() {
   const { user, ready, openAuth } = useAuth();
-  const [rows, setRows] = useState<TransactionView[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [role, setRole] = useState<RoleFilter>("all");
+  const [transactionResult, setTransactionResult] = useState<{
+    userId: string;
+    rows: TransactionView[];
+    error: string | null;
+  } | null>(null);
+  const [disputeResult, setDisputeResult] = useState<{
+    userId: string;
+    disputes: DjangoDispute[];
+    error: string | null;
+  } | null>(null);
+  const [disputeSubmitError, setDisputeSubmitError] = useState<string | null>(null);
+  const [disputeSuccess, setDisputeSuccess] = useState<string | null>(null);
+  const [disputeTransactionId, setDisputeTransactionId] = useState<string | null>(null);
+  const [disputeReason, setDisputeReason] = useState("");
+  const [submittingDispute, setSubmittingDispute] = useState(false);
+  const currentTransactions =
+    user && transactionResult?.userId === user.id ? transactionResult : null;
+  const currentDisputes = user && disputeResult?.userId === user.id ? disputeResult : null;
+  const rows = currentTransactions?.rows ?? EMPTY_TRANSACTIONS;
+  const disputes = currentDisputes?.disputes ?? [];
+  const loading = Boolean(user && !currentTransactions);
+  const disputeLoading = Boolean(user && !currentDisputes);
+  const error = currentTransactions?.error ?? null;
+  const disputeError = disputeSubmitError ?? currentDisputes?.error ?? null;
 
   useEffect(() => {
     if (!ready) return;
     if (!user) {
-      setLoading(false);
       openAuth("login", "/transactions");
       return;
     }
 
     let alive = true;
-    setLoading(true);
-    setError(null);
-    void fetchMyTransactions(user.id)
+    void fetchMyTransactions()
       .then((list) => {
-        if (alive) setRows(list);
+        if (alive) setTransactionResult({ userId: user.id, rows: list, error: null });
       })
       .catch((err) => {
         if (alive) {
-          setError(err instanceof Error ? err.message : "Could not load transactions");
+          setTransactionResult({
+            userId: user.id,
+            rows: [],
+            error: err instanceof Error ? err.message : "Could not load transactions",
+          });
         }
+      });
+    void djangoDisputes
+      .fetchMine()
+      .then((list) => {
+        if (alive) setDisputeResult({ userId: user.id, disputes: list, error: null });
       })
-      .finally(() => {
-        if (alive) setLoading(false);
+      .catch((err) => {
+        if (alive) {
+          setDisputeResult({
+            userId: user.id,
+            disputes: [],
+            error: err instanceof Error ? err.message : "Could not load disputes",
+          });
+        }
       });
 
     return () => {
       alive = false;
     };
   }, [ready, user, openAuth]);
+
+  async function submitDispute(event: React.FormEvent, transactionId: string) {
+    event.preventDefault();
+    if (!user) return;
+    const reason = disputeReason.trim();
+    if (!reason) {
+      setDisputeSubmitError("Enter a reason for the dispute.");
+      return;
+    }
+
+    setSubmittingDispute(true);
+    setDisputeSubmitError(null);
+    setDisputeSuccess(null);
+    try {
+      const created = await djangoDisputes.create({
+        transaction_id: transactionId,
+        reason,
+      });
+      setDisputeResult((current) => ({
+        userId: user.id,
+        disputes: [
+          created,
+          ...(current?.userId === user.id ? current.disputes : []),
+        ],
+        error: null,
+      }));
+      setDisputeReason("");
+      setDisputeTransactionId(null);
+      setDisputeSuccess("Your dispute was submitted.");
+    } catch (err) {
+      setDisputeSubmitError(
+        err instanceof Error ? err.message : "Could not submit dispute"
+      );
+    } finally {
+      setSubmittingDispute(false);
+    }
+  }
 
   const visible = useMemo(() => {
     if (!user) return [];
@@ -150,7 +224,9 @@ export function TransactionsPage() {
                 <div className="mine-cell">{selling ? "Seller" : "Buyer"}</div>
                 <div className="mine-cell">{t.counterpartyName}</div>
                 <div className="mine-cell mine-cell--mono">
-                  {t.priceNgn && t.priceNgn > 0 ? `₦${formatPriceNgn(t.priceNgn)}` : "—"}
+                  {t.amountNgn && t.amountNgn > 0
+                    ? formatTransactionAmount(t.amountNgn, t.currency)
+                    : "—"}
                 </div>
                 <div>
                   <span className={statusClass(t.status)}>{t.status}</span>
@@ -162,6 +238,133 @@ export function TransactionsPage() {
           })
         )}
       </div>
+
+      <section className="panel panel--pad" aria-labelledby="disputes-heading">
+        <div className="panel-label" id="disputes-heading">
+          DISPUTES
+        </div>
+        <p className="page-sub">
+          Buyers can report an issue with a paid exchange. Disputes on your transactions are listed
+          here.
+        </p>
+        {disputeError ? <div className="upload-error">{disputeError}</div> : null}
+        {disputeSuccess ? <div className="field-foot" role="status">{disputeSuccess}</div> : null}
+        <div className="form-stack">
+          <div>
+            <div className="field-label">Your disputes</div>
+            {disputeLoading ? (
+              <div className="field-foot">Loading disputes…</div>
+            ) : disputes.length === 0 ? (
+              <div className="field-foot">No disputes on your transactions.</div>
+            ) : (
+              <div className="pipeline-items">
+                {disputes.map((dispute) => {
+                  const transaction = rows.find((row) => row.id === dispute.transaction_id);
+                  return (
+                    <div className="pipeline-item" key={dispute.id}>
+                      <div className="pipeline-item-t">
+                        {transaction ? (
+                          <Link href={`/transactions/${transaction.id}`}>
+                            {transaction.listingTitle}
+                          </Link>
+                        ) : (
+                          `Transaction ${transactionRef(dispute.transaction_id)}`
+                        )}
+                        {" · "}
+                        <span className={statusClass(dispute.status)}>{dispute.status}</span>
+                      </div>
+                      <div className="pipeline-item-s">{dispute.reason}</div>
+                      <div className="pipeline-item-s">
+                        Opened {new Date(dispute.created_at).toLocaleString("en-GB")}
+                        {dispute.resolution_note ? ` · ${dispute.resolution_note}` : ""}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <div>
+            <div className="field-label">Open a dispute</div>
+            {rows.filter((transaction) => transaction.buyerId === user.id && transaction.paidAt)
+              .length === 0 ? (
+              <div className="field-foot">No paid buyer transactions are eligible for a dispute.</div>
+            ) : (
+              <div className="form-stack">
+                {rows
+                  .filter((transaction) => transaction.buyerId === user.id && transaction.paidAt)
+                  .map((transaction) => {
+                    const hasOpenDispute = !canRaiseDispute(transaction, user.id, disputes);
+                    const formOpen = disputeTransactionId === transaction.id;
+                    return (
+                      <div className="pipeline-item" key={transaction.id}>
+                        <div className="pipeline-item-t">{transaction.listingTitle}</div>
+                        <div className="pipeline-item-s">
+                          {transactionRef(transaction.id)} ·{" "}
+                          {formatTransactionAmount(transaction.amountNgn, transaction.currency)}
+                        </div>
+                        {hasOpenDispute ? (
+                          <div className="field-foot">An open dispute already exists.</div>
+                        ) : formOpen ? (
+                          <form
+                            className="form-stack"
+                            onSubmit={(event) => void submitDispute(event, transaction.id)}
+                          >
+                            <label className="field-label" htmlFor={`dispute-reason-${transaction.id}`}>
+                              Reason for dispute
+                            </label>
+                            <textarea
+                              id={`dispute-reason-${transaction.id}`}
+                              className="input"
+                              rows={4}
+                              maxLength={4000}
+                              value={disputeReason}
+                              onChange={(event) => setDisputeReason(event.target.value)}
+                              required
+                            />
+                            <div className="form-row-2">
+                              <button
+                                type="submit"
+                                className="btn btn-primary btn-sm"
+                                disabled={submittingDispute || !disputeReason.trim()}
+                              >
+                                {submittingDispute ? "Submitting…" : "Submit dispute"}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-outline btn-sm"
+                                onClick={() => {
+                                  setDisputeTransactionId(null);
+                                  setDisputeReason("");
+                                }}
+                                disabled={submittingDispute}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </form>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn btn-outline btn-sm"
+                            onClick={() => {
+                              setDisputeSubmitError(null);
+                              setDisputeSuccess(null);
+                              setDisputeTransactionId(transaction.id);
+                              setDisputeReason("");
+                            }}
+                          >
+                            Report an issue
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
     </div>
   );
 }

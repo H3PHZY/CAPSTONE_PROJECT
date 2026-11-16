@@ -63,7 +63,7 @@ export function HomePage() {
           </div>
 
           <div className="home-hero-stats">
-            <div className="home-hero-stats-label">PILOT TO DATE</div>
+            <div className="home-hero-stats-label">SAMPLE PILOT FIGURES</div>
             <div className="home-hero-stats-list">
               {HERO_STATS.map((h) => (
                 <div key={h.k} className="home-hero-stat">

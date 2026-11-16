@@ -9,9 +9,16 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { User } from "@supabase/supabase-js";
-import { supabase } from "@/lib/supabase";
-import type { ProfileRow } from "@/lib/database.types";
+import {
+  clearTokens,
+  DjangoApiError,
+  getToken,
+  SESSION_EXPIRED_EVENT,
+  setTokens,
+} from "@/lib/django-auth";
+import { djangoRequest } from "@/lib/django-api";
+
+// ─── Exported types ───────────────────────────────────────────────────────────
 
 export type AuthMode = "login" | "signup" | "forgot";
 
@@ -21,12 +28,57 @@ export type AuthPrefs = {
 
 export type SignupProfile = {
   businessName: string;
+  dateOfBirth: string;
   cluster: string;
   phone: string;
   sells: boolean;
   buys: boolean;
   carbonImpact: boolean;
   researchConsent: boolean;
+};
+
+export interface DjangoUser {
+  id: string;
+  email: string;
+}
+
+export interface DjangoProfile {
+  id: string;
+  email: string;
+  business_name: string;
+  phone: string | null;
+  cluster: string;
+  zone: string | null;
+  address: string;
+  date_of_birth: string | null;
+  sells: boolean;
+  buys: boolean;
+  carbon_impact: boolean;
+  research_consent: boolean;
+  verified: boolean;
+  avatar_url: string | null;
+  lat: number | null;
+  lng: number | null;
+  created_at: string;
+}
+
+type DjangoProfileResponse = Omit<DjangoProfile, "id" | "email"> & {
+  display_avatar_url?: string | null;
+};
+
+type DjangoUserResponse = {
+  id: string;
+  email: string;
+  profile: DjangoProfileResponse;
+};
+
+type DjangoAuthResponse = {
+  user: DjangoUserResponse;
+  tokens: { access: string; refresh: string };
+};
+
+type DjangoCredentialResponse = DjangoUserResponse & {
+  tokens?: { access: string; refresh: string };
 };
 
 /** Pilot trust model: business name + phone + sell/buy role → verified badge. */
@@ -41,12 +93,14 @@ export function isPilotVerified(input: {
   return Boolean(name && phone && (input.sells || input.buys));
 }
 
-interface AuthContextValue {
+// ─── Auth context ────────────────────────────────────────────────────────────
+
+export interface AuthContextValue {
   isAuthenticated: boolean;
   ready: boolean;
   prefs: AuthPrefs;
-  user: User | null;
-  profile: ProfileRow | null;
+  user: DjangoUser | null;
+  profile: DjangoProfile | null;
   authOpen: boolean;
   authMode: AuthMode;
   pendingPath: string | null;
@@ -55,7 +109,7 @@ interface AuthContextValue {
   setAuthMode: (mode: AuthMode) => void;
   login: (email: string, password: string, signup?: SignupProfile) => Promise<void>;
   requestPasswordReset: (email: string) => Promise<void>;
-  updatePassword: (password: string) => Promise<void>;
+  updatePassword: (password: string, currentPassword: string) => Promise<void>;
   updateProfile: (patch: {
     businessName: string;
     phone: string;
@@ -63,62 +117,89 @@ interface AuthContextValue {
     sells: boolean;
     buys: boolean;
     carbonImpact: boolean;
+    zone?: string | null;
+    address?: string;
+    lat?: number | null;
+    lng?: number | null;
   }) => Promise<void>;
   updateAvatar: (avatarUrl: string | null) => Promise<void>;
-  updateEmail: (email: string) => Promise<void>;
+  updateEmail: (email: string, currentPassword: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
-const DEFAULT_PREFS: AuthPrefs = { carbonImpact: false };
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function resetRedirectUrl() {
-  if (typeof window === "undefined") return undefined;
-  return `${window.location.origin}/reset-password`;
-}
+const DEFAULT_PREFS: AuthPrefs = { carbonImpact: false };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function profileFromResponse(user: DjangoUserResponse): DjangoProfile {
+  return {
+    ...user.profile,
+    id: user.id,
+    email: user.email,
+    avatar_url: user.profile.display_avatar_url ?? user.profile.avatar_url,
+  };
+}
+
+/** Fetch the current user+profile from Django. An expired token is an anonymous session. */
+async function fetchMe(): Promise<DjangoProfile | null> {
+  if (!getToken()) return null;
+  try {
+    const user = await djangoRequest<DjangoUserResponse>("/auth/me/");
+    return profileFromResponse(user);
+  } catch (error) {
+    if (error instanceof DjangoApiError && error.status === 401) return null;
+    throw error;
+  }
+}
+
+function profileToUser(p: DjangoProfile): DjangoUser {
+  return { id: p.id, email: p.email };
+}
+
+// ─── Provider ─────────────────────────────────────────────────────────────────
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
-  const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<ProfileRow | null>(null);
+  const [user, setUser] = useState<DjangoUser | null>(null);
+  const [profile, setProfile] = useState<DjangoProfile | null>(null);
   const [prefs, setPrefs] = useState<AuthPrefs>(DEFAULT_PREFS);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<AuthMode>("login");
   const [pendingPath, setPendingPath] = useState<string | null>(null);
 
+  // On mount: restore session from localStorage token → GET /api/auth/me/
   useEffect(() => {
     let active = true;
-
-    async function loadProfile(userId: string) {
-      const { data } = await supabase.from("profiles").select("*").eq("id", userId).maybeSingle();
+    void fetchMe().then((p) => {
       if (!active) return;
-      setProfile(data);
-      setPrefs({ carbonImpact: Boolean(data?.carbon_impact) });
-    }
-
-    void supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!active) return;
-      setUser(session?.user ?? null);
-      if (session?.user) void loadProfile(session.user.id);
-      else setReady(true);
-    });
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_, session) => {
-      if (!active) return;
-      setUser(session?.user ?? null);
-      if (session?.user) void loadProfile(session.user.id);
-      else {
-        setProfile(null);
-        setPrefs(DEFAULT_PREFS);
+      if (p) {
+        setUser(profileToUser(p));
+        setProfile(p);
+        setPrefs({ carbonImpact: Boolean(p.carbon_impact) });
       }
       setReady(true);
+    }).catch((error: unknown) => {
+      console.error("Could not restore the Django session", error);
+      if (active) setReady(true);
     });
-
     return () => {
       active = false;
-      listener.subscription.unsubscribe();
     };
+  }, []);
+
+  useEffect(() => {
+    const handleExpiredSession = () => {
+      setUser(null);
+      setProfile(null);
+      setPrefs(DEFAULT_PREFS);
+      setPendingPath(null);
+      setAuthOpen(false);
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleExpiredSession);
+    return () =>
+      window.removeEventListener(SESSION_EXPIRED_EVENT, handleExpiredSession);
   }, []);
 
   const isAuthenticated = Boolean(user);
@@ -135,70 +216,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string, signup?: SignupProfile) => {
-    const result = signup
-      ? await supabase.auth.signUp({
+    let res: DjangoAuthResponse;
+    if (signup) {
+      res = await djangoRequest<DjangoAuthResponse>("/auth/signup/", {
+        method: "POST",
+        body: JSON.stringify({
           email,
           password,
-          options: {
-            data: {
-              business_name: signup.businessName,
-              cluster: signup.cluster,
-              phone: signup.phone,
-              sells: signup.sells,
-              buys: signup.buys,
-              carbon_impact: signup.carbonImpact,
-              research_consent: signup.researchConsent,
-            },
-          },
-        })
-      : await supabase.auth.signInWithPassword({ email, password });
-
-    if (result.error) throw result.error;
-    if (!result.data.user) throw new Error("Supabase did not return a user");
-
-    if (signup && !result.data.session) {
-      throw new Error("Check your email to confirm your account, then log in.");
-    }
-
-    if (signup) {
-      const { data, error } = await supabase
-        .from("profiles")
-        .upsert({
-          id: result.data.user.id,
           business_name: signup.businessName,
+          date_of_birth: signup.dateOfBirth,
           cluster: signup.cluster,
           phone: signup.phone,
           sells: signup.sells,
           buys: signup.buys,
           carbon_impact: signup.carbonImpact,
           research_consent: signup.researchConsent,
-          // Pilot trust: complete seller/buyer profile → verified badge on listings
-          verified: isPilotVerified({
-            businessName: signup.businessName,
-            phone: signup.phone,
-            sells: signup.sells,
-            buys: signup.buys,
-          }),
-        })
-        .select()
-        .single();
-      if (error) throw error;
-      setProfile(data);
-      setPrefs({ carbonImpact: data.carbon_impact });
+        }),
+      });
+    } else {
+      res = await djangoRequest<DjangoAuthResponse>("/auth/login/", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
     }
+
+    setTokens(res.tokens.access, res.tokens.refresh);
+    const profileData = profileFromResponse(res.user);
+    setUser(profileToUser(profileData));
+    setProfile(profileData);
+    setPrefs({ carbonImpact: Boolean(profileData.carbon_impact) });
     setAuthOpen(false);
   }, []);
 
   const requestPasswordReset = useCallback(async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: resetRedirectUrl(),
+    await djangoRequest<{ detail: string }>("/auth/password-reset/", {
+      method: "POST",
+      body: JSON.stringify({ email: email.trim() }),
     });
-    if (error) throw error;
   }, []);
 
-  const updatePassword = useCallback(async (password: string) => {
-    const { error } = await supabase.auth.updateUser({ password });
-    if (error) throw error;
+  const updatePassword = useCallback(async (password: string, currentPassword: string) => {
+    if (password.length < 8) {
+      throw new Error("Password must be at least 8 characters.");
+    }
+    const response = await djangoRequest<DjangoCredentialResponse>("/auth/me/", {
+      method: "PATCH",
+      body: JSON.stringify({ password, current_password: currentPassword }),
+    });
+    if (response.tokens) setTokens(response.tokens.access, response.tokens.refresh);
+    const data = profileFromResponse(response);
+    setProfile(data);
+    setUser(profileToUser(data));
   }, []);
 
   const updateProfile = useCallback(
@@ -209,36 +277,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sells: boolean;
       buys: boolean;
       carbonImpact: boolean;
+      zone?: string | null;
+      address?: string;
+      lat?: number | null;
+      lng?: number | null;
     }) => {
-      const {
-        data: { user: current },
-      } = await supabase.auth.getUser();
-      if (!current) throw new Error("You must be signed in to update your profile");
       if (!patch.sells && !patch.buys) {
         throw new Error("Select at least one of sell or buy");
       }
       const businessName = patch.businessName.trim();
       const phone = patch.phone.trim();
-      const { data, error } = await supabase
-        .from("profiles")
-        .update({
-          business_name: businessName,
-          phone: phone || null,
-          cluster: patch.cluster,
+
+      const data = profileFromResponse(
+        await djangoRequest<DjangoUserResponse>("/auth/me/", {
+          method: "PATCH",
+          body: JSON.stringify({
+        business_name: businessName,
+        phone: phone || null,
+        cluster: patch.cluster,
+        sells: patch.sells,
+        buys: patch.buys,
+        carbon_impact: patch.carbonImpact,
+        ...(patch.zone !== undefined ? { zone: patch.zone } : {}),
+        ...(patch.address !== undefined ? { address: patch.address } : {}),
+        ...(patch.lat !== undefined ? { lat: patch.lat } : {}),
+        ...(patch.lng !== undefined ? { lng: patch.lng } : {}),
+        verified: isPilotVerified({
+          businessName,
+          phone,
           sells: patch.sells,
           buys: patch.buys,
-          carbon_impact: patch.carbonImpact,
-          verified: isPilotVerified({
-            businessName,
-            phone,
-            sells: patch.sells,
-            buys: patch.buys,
+        }),
           }),
         })
-        .eq("id", current.id)
-        .select()
-        .single();
-      if (error) throw error;
+      );
       setProfile(data);
       setPrefs({ carbonImpact: Boolean(data.carbon_impact) });
     },
@@ -246,45 +318,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const updateAvatar = useCallback(async (avatarUrl: string | null) => {
-    const {
-      data: { user: current },
-    } = await supabase.auth.getUser();
-    if (!current) throw new Error("You must be signed in to update your photo");
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .update({ avatar_url: avatarUrl })
-      .eq("id", current.id)
-      .select()
-      .single();
-
-    if (error) {
-      if (/avatar_url|column/i.test(error.message)) {
-        throw new Error(
-          "Run supabase/migrations/013_profile_avatars.sql in the Supabase SQL Editor, then try again."
-        );
-      }
-      throw error;
-    }
+    const response = await djangoRequest<DjangoUserResponse>("/auth/me/", {
+      method: "PATCH",
+      body: JSON.stringify({ avatar_url: avatarUrl }),
+    });
+    const data = profileFromResponse(response);
     setProfile(data);
   }, []);
 
-  const updateEmail = useCallback(async (email: string) => {
+  const updateEmail = useCallback(async (email: string, currentPassword: string) => {
     const next = email.trim();
     if (!next) throw new Error("Email is required");
-    const { data, error } = await supabase.auth.updateUser({ email: next });
-    if (error) throw error;
-    if (data.user) setUser(data.user);
+    const response = await djangoRequest<DjangoCredentialResponse>("/auth/me/", {
+      method: "PATCH",
+      body: JSON.stringify({ email: next, current_password: currentPassword }),
+    });
+    if (response.tokens) setTokens(response.tokens.access, response.tokens.refresh);
+    const data = profileFromResponse(response);
+    setProfile(data);
+    setUser(profileToUser(data));
   }, []);
 
   const logout = useCallback(async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
-    setUser(null);
-    setProfile(null);
-    setPrefs(DEFAULT_PREFS);
-    setPendingPath(null);
-    setAuthOpen(false);
+    try {
+      if (getToken()) {
+        await djangoRequest<void>("/auth/logout/", { method: "POST" });
+      }
+    } catch (error) {
+      console.warn("Could not revoke the server session during logout", error);
+    } finally {
+      clearTokens();
+      setUser(null);
+      setProfile(null);
+      setPrefs(DEFAULT_PREFS);
+      setPendingPath(null);
+      setAuthOpen(false);
+    }
   }, []);
 
   const value = useMemo(

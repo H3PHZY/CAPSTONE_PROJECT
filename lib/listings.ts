@@ -1,5 +1,6 @@
-import { supabase } from "@/lib/supabase";
-import type { ClassificationRow, ListingRow, MaterialCategory, ProfileRow } from "@/lib/database.types";
+import type { ClassificationRow, ListingRow, MaterialCategory, ProfileRow } from "@/lib/models";
+import { DjangoApiError } from "@/lib/django-auth";
+import { djangoListings, type DjangoListing } from "@/lib/django-api";
 import type { Listing, ListingStatus, MyListing } from "@/lib/types";
 
 const ZONE_COORDS: Record<string, { lat: number; lng: number }> = {
@@ -13,7 +14,12 @@ const ZONE_COORDS: Record<string, { lat: number; lng: number }> = {
 
 const VIEWER_DEFAULT = ZONE_COORDS.Ogba;
 
+export function getZoneCoordinates(zone: string) {
+  return ZONE_COORDS[zone] ?? VIEWER_DEFAULT;
+}
+
 type ListingJoin = ListingRow & {
+  distance?: number;
   seller?: Pick<ProfileRow, "business_name" | "verified" | "cluster"> | null;
   classifications?:
     | Pick<ClassificationRow, "confidence" | "final_material" | "overridden">
@@ -54,8 +60,7 @@ function coordsFor(listing: Pick<ListingRow, "lat" | "lng" | "zone">) {
   if (listing.lat != null && listing.lng != null) {
     return { lat: listing.lat, lng: listing.lng };
   }
-  const zone = listing.zone ?? "";
-  return ZONE_COORDS[zone] ?? VIEWER_DEFAULT;
+  return getZoneCoordinates(listing.zone ?? "");
 }
 
 function classificationOf(row: ListingJoin) {
@@ -78,12 +83,17 @@ export function mapListingRow(
   viewer = VIEWER_DEFAULT
 ): Listing {
   const cls = classificationOf(row);
-  const distance = Math.round(haversineKm(viewer, coordsFor(row)) * 10) / 10;
+  const coords = coordsFor(row);
+  const distance =
+    row.distance == null
+      ? Math.round(haversineKm(viewer, coords) * 10) / 10
+      : Math.round(row.distance * 10) / 10;
   const photoUrls = listingPhotoGallery(row);
   const photoUrl = photoUrls[0] ?? row.photo_url;
 
   return {
     id: row.id,
+    sellerId: row.seller_id,
     title: row.title,
     material: (cls?.final_material ?? row.material) as MaterialCategory,
     weight: Number(row.weight_kg),
@@ -93,6 +103,9 @@ export function mapListingRow(
     verified: Boolean(row.seller?.verified),
     conf: Math.round(Number(cls?.confidence ?? 0.8) * 100),
     zone: row.zone || row.seller?.cluster || "Ogba",
+    address: row.address,
+    lat: coords.lat,
+    lng: coords.lng,
     photo: photoUrl || "photo pending",
     photoUrl,
     photoUrls,
@@ -121,58 +134,93 @@ export function toMyListing(row: ListingRow): MyListing {
   };
 }
 
-const LISTING_SELECT = `
-  *,
-  seller:profiles!seller_id (
-    business_name,
-    verified,
-    cluster
-  ),
-  classifications (
-    confidence,
-    final_material,
-    overridden
-  )
-`;
-
-export async function fetchLiveListings(viewerCluster?: string | null) {
-  const viewer =
-    (viewerCluster && ZONE_COORDS[viewerCluster]) || VIEWER_DEFAULT;
-
-  const { data, error } = await supabase
-    .from("listings")
-    .select(LISTING_SELECT)
-    .eq("status", "Live")
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
-  return ((data ?? []) as unknown as ListingJoin[]).map((row) => mapListingRow(row, viewer));
+function fromDjangoListing(row: DjangoListing): ListingRow {
+  return {
+    id: row.id,
+    seller_id: row.seller_id,
+    title: row.title,
+    material: row.material as MaterialCategory,
+    weight_kg: Number(row.weight_kg),
+    price_ngn: row.price_ngn == null ? null : Number(row.price_ngn),
+    status: row.status as ListingStatus,
+    photo_url: row.primary_photo_url ?? row.photo_url,
+    photo_urls: row.all_photos?.length ? row.all_photos : row.photo_urls ?? [],
+    zone: row.zone,
+    address: row.address,
+    lat: row.lat,
+    lng: row.lng,
+    views: row.views,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  };
 }
 
-export async function fetchListingById(id: string, viewerCluster?: string | null) {
-  const viewer =
-    (viewerCluster && ZONE_COORDS[viewerCluster]) || VIEWER_DEFAULT;
-
-  const { data, error } = await supabase
-    .from("listings")
-    .select(LISTING_SELECT)
-    .eq("id", id)
-    .maybeSingle();
-
-  if (error) throw error;
-  if (!data) return null;
-  return mapListingRow(data as unknown as ListingJoin, viewer);
+function fromDjangoListingJoin(row: DjangoListing): ListingJoin {
+  return {
+    ...fromDjangoListing(row),
+    seller: {
+      business_name: row.seller_name,
+      verified: row.verified,
+      cluster: row.seller_cluster,
+    },
+    classifications: row.classification
+      ? {
+          confidence: Number(row.classification.confidence),
+          final_material: row.classification.final_material as MaterialCategory,
+          overridden: row.classification.overridden,
+        }
+      : null,
+    distance: row.distance,
+  };
 }
 
-export async function fetchMyListings(sellerId: string) {
-  const { data, error } = await supabase
-    .from("listings")
-    .select("*")
-    .eq("seller_id", sellerId)
-    .order("created_at", { ascending: false });
+export async function fetchLiveListings(
+  viewerCluster?: string | null,
+  viewerLocation?: { lat: number | null; lng: number | null }
+) {
+  const viewer =
+    viewerLocation?.lat != null && viewerLocation.lng != null
+      ? { lat: viewerLocation.lat, lng: viewerLocation.lng }
+      : (viewerCluster && ZONE_COORDS[viewerCluster]) || VIEWER_DEFAULT;
+  const rows = await djangoListings.fetchLive({
+    cluster: viewerCluster,
+    lat: viewerLocation?.lat,
+    lng: viewerLocation?.lng,
+  });
+  return rows
+    .filter((row) => row.status === "Live")
+    .map((row) => mapListingRow(fromDjangoListingJoin(row), viewer));
+}
 
-  if (error) throw error;
-  return ((data ?? []) as ListingRow[]).map(toMyListing);
+export async function fetchListingById(
+  id: string,
+  viewerCluster?: string | null,
+  viewerLocation?: { lat: number | null; lng: number | null }
+) {
+  const viewer =
+    viewerLocation?.lat != null && viewerLocation.lng != null
+      ? { lat: viewerLocation.lat, lng: viewerLocation.lng }
+      : (viewerCluster && ZONE_COORDS[viewerCluster]) || VIEWER_DEFAULT;
+  try {
+    const row = await djangoListings.fetchById(id, {
+      cluster: viewerCluster,
+      lat: viewerLocation?.lat,
+      lng: viewerLocation?.lng,
+    });
+    return mapListingRow(fromDjangoListingJoin(row), viewer);
+  } catch (error) {
+    if (error instanceof DjangoApiError && error.status === 404) return null;
+    throw error;
+  }
+}
+
+export async function fetchMyListings() {
+  const rows = await djangoListings.fetchMine();
+  return rows.map((row) => toMyListing(fromDjangoListing(row)));
+}
+
+export async function publishOwnedListing(listingId: string) {
+  return djangoListings.publish(listingId);
 }
 
 export type CreateListingInput = {
@@ -183,72 +231,62 @@ export type CreateListingInput = {
   priceNgn: number | null;
   photoUrl: string;
   zone: string;
+  address?: string;
+  lat?: number | null;
+  lng?: number | null;
   predictedMaterial: MaterialCategory;
   confidence: number;
   overridden: boolean;
   modelId?: string;
+  isDraft?: boolean;
 };
 
 export async function createLiveListing(input: CreateListingInput) {
-  const zoneCoords = ZONE_COORDS[input.zone] ?? VIEWER_DEFAULT;
-
-  const { data: listing, error } = await supabase
-    .from("listings")
-    .insert({
-      seller_id: input.sellerId,
-      title: input.title.trim(),
-      material: input.material,
-      weight_kg: input.weightKg,
-      price_ngn: input.priceNgn,
-      status: "Live",
-      photo_url: input.photoUrl,
-      zone: input.zone,
-      lat: zoneCoords.lat,
-      lng: zoneCoords.lng,
-    })
-    .select("*")
-    .single();
-
-  if (error) throw error;
-
-  const { error: classError } = await supabase.from("classifications").insert({
-    listing_id: listing.id,
+  const created = await djangoListings.create({
+    title: input.title.trim(),
+    material: input.material,
+    weight_kg: input.weightKg,
+    price_ngn: input.priceNgn,
+    photo_url: input.photoUrl,
+    zone: input.zone,
+    address: input.address ?? "",
+    lat: input.lat ?? null,
+    lng: input.lng ?? null,
     predicted_material: input.predictedMaterial,
     confidence: input.confidence,
     overridden: input.overridden,
-    final_material: input.material,
     model_id: input.modelId || "hf-endpoint",
+    is_draft: input.isDraft ?? false,
   });
-
-  if (classError) throw classError;
-  return listing as ListingRow;
+  const listing = await djangoListings.fetchById(created.id);
+  return fromDjangoListing(listing);
 }
 
 export async function fetchOwnedListing(listingId: string, sellerId: string) {
-  const { data, error } = await supabase
-    .from("listings")
-    .select("*")
-    .eq("id", listingId)
-    .eq("seller_id", sellerId)
-    .maybeSingle();
-
-  if (error) throw error;
-  return (data as ListingRow | null) ?? null;
+  try {
+    const row = await djangoListings.fetchById(listingId);
+    if (row.seller_id !== sellerId) return null;
+    return fromDjangoListing(row);
+  } catch (error) {
+    if (error instanceof DjangoApiError && error.status === 404) return null;
+    throw error;
+  }
 }
 
 export type UpdateListingInput = {
   title: string;
   weightKg: number;
   priceNgn: number | null;
-  status: ListingStatus;
   photoUrl: string | null;
   photoUrls: string[];
   zone?: string;
+  address?: string;
+  lat?: number | null;
+  lng?: number | null;
 };
 
 export async function updateOwnedListing(
   listingId: string,
-  sellerId: string,
   input: UpdateListingInput
 ) {
   const cover = input.photoUrl?.trim() || null;
@@ -256,31 +294,21 @@ export async function updateOwnedListing(
     .map((u) => u.trim())
     .filter((u) => u && u !== cover);
 
-  const patch: Partial<ListingRow> = {
+  const patch: Record<string, unknown> = {
     title: input.title.trim(),
     weight_kg: input.weightKg,
     price_ngn: input.priceNgn,
-    status: input.status,
     photo_url: cover,
     photo_urls: extras,
   };
   if (input.zone) {
-    const zoneCoords = ZONE_COORDS[input.zone] ?? VIEWER_DEFAULT;
     patch.zone = input.zone;
-    patch.lat = zoneCoords.lat;
-    patch.lng = zoneCoords.lng;
   }
+  if (input.address !== undefined) patch.address = input.address;
+  if (input.lat !== undefined) patch.lat = input.lat;
+  if (input.lng !== undefined) patch.lng = input.lng;
 
-  const { data, error } = await supabase
-    .from("listings")
-    .update(patch)
-    .eq("id", listingId)
-    .eq("seller_id", sellerId)
-    .select("*")
-    .single();
-
-  if (error) throw error;
-  return data as ListingRow;
+  return fromDjangoListing(await djangoListings.update(listingId, patch));
 }
 
 /** Removes a Draft/Live listing owned by the seller. Clears open Interest first. */
@@ -290,42 +318,9 @@ export async function deleteOwnedListing(listingId: string, sellerId: string) {
 
   if (row.status === "Reserved" || row.status === "Sold") {
     throw new Error(
-      "Reserved or sold listings can’t be deleted (exchange history). Set status to Live or Draft only if the deal is cancelled, or leave it for records."
+      "Reserved or sold listings can’t be deleted (exchange history). Contact support if the deal needs review."
     );
   }
 
-  // Clear open interest so listings FK (on delete restrict) does not block.
-  const { error: txError } = await supabase
-    .from("transactions")
-    .delete()
-    .eq("listing_id", listingId)
-    .eq("seller_id", sellerId)
-    .in("status", ["Interest", "Cancelled"]);
-
-  if (txError) throw txError;
-
-  const { error } = await supabase
-    .from("listings")
-    .delete()
-    .eq("id", listingId)
-    .eq("seller_id", sellerId)
-    .in("status", ["Draft", "Live"]);
-
-  if (error) {
-    if (/policy|permission|row-level/i.test(error.message)) {
-      throw new Error(
-        "Run supabase/migrations/009_seller_delete_listings.sql in the Supabase SQL Editor, then try again."
-      );
-    }
-    if (/foreign key|restrict/i.test(error.message)) {
-      throw new Error(
-        "This listing still has a reserved or completed exchange, so it can’t be deleted."
-      );
-    }
-    throw error;
-  }
-}
-
-export async function bumpListingViews(id: string, current: number) {
-  await supabase.from("listings").update({ views: current + 1 }).eq("id", id);
+  await djangoListings.delete(listingId);
 }

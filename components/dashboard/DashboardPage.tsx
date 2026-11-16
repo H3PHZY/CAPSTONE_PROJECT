@@ -23,9 +23,9 @@ export function DashboardPage() {
     void (async () => {
       try {
         const [mine, impact, txns, live] = await Promise.all([
-          fetchMyListings(user.id),
-          fetchCarbonImpact(user.id),
-          fetchMyTransactions(user.id),
+          fetchMyListings(),
+          fetchCarbonImpact(),
+          fetchMyTransactions(),
           fetchLiveListings().catch(() => []),
         ]);
         if (!alive) return;
@@ -165,32 +165,29 @@ export function DashboardPage() {
         </div>
 
         <div className="dash-side">
-          <div className="impact-snap">
-            <div className="impact-snap-label">YOUR IMPACT SNAPSHOT</div>
-            <div className="impact-snap-row">
-              <div className="impact-snap-v">{co2.toLocaleString()}</div>
-              <div className="impact-snap-unit">kg CO₂e diverted</div>
+          {prefs.carbonImpact ? (
+            <div className="impact-snap">
+              <div className="impact-snap-label">YOUR IMPACT SNAPSHOT</div>
+              <div className="impact-snap-row">
+                <div className="impact-snap-v">{co2.toLocaleString()}</div>
+                <div className="impact-snap-unit">kg CO₂e diverted</div>
+              </div>
+              <div className="progress-track progress-track--dark">
+                <div
+                  className="progress-fill progress-fill--green"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <div className="impact-snap-meta">
+                <span>
+                  {pct}% of your {goal.toLocaleString()} kg diversion goal
+                </span>
+                <span>
+                  {exchanges} exchange{exchanges === 1 ? "" : "s"}
+                </span>
+              </div>
             </div>
-            <div className="progress-track progress-track--dark">
-              <div
-                className="progress-fill progress-fill--green"
-                style={{ width: `${pct}%` }}
-              />
-            </div>
-            <div className="impact-snap-meta">
-              <span>
-                {pct}% of your {goal.toLocaleString()} kg diversion goal
-              </span>
-              <span>
-                {exchanges} exchange{exchanges === 1 ? "" : "s"}
-              </span>
-            </div>
-            {prefs.carbonImpact ? (
-              <Link href="/impact" className="btn btn-ghost-light btn-block">
-                See full impact
-              </Link>
-            ) : null}
-          </div>
+          ) : null}
 
           <div className="panel panel--pad">
             <div className="panel-label">MARKETPLACE MIX · LIVE LOTS</div>

@@ -29,7 +29,6 @@ export function Footer() {
               <Link href="/marketplace">Marketplace</Link>
               <Link href="/listings/new">List a material</Link>
               <Link href="/transactions">Transactions</Link>
-              <Link href="/impact">Carbon methodology</Link>
             </div>
           </div>
 

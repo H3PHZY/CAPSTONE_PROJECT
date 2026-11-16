@@ -1,0 +1,716 @@
+from decimal import Decimal
+from datetime import date
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from django.db import transaction
+from django.db.models import Q
+from rest_framework import serializers
+from api.models import (
+    Profile,
+    Listing,
+    Classification,
+    Transaction as DealTransaction,
+    TransactionStatus,
+    ListingStatus,
+    CarbonRecord,
+    Message,
+    Dispute,
+    MaterialCategory,
+)
+from api.utils import haversine_km, calculate_co2_kg, get_coords_for_zone
+from api.validators import validate_uploaded_image
+
+User = get_user_model()
+
+# ─── Auth & Profile Serializers ──────────────────────────────────────────────
+
+class ProfileSerializer(serializers.ModelSerializer):
+    display_avatar_url = serializers.ReadOnlyField()
+    lat = serializers.FloatField(required=False, allow_null=True, min_value=-90, max_value=90)
+    lng = serializers.FloatField(required=False, allow_null=True, min_value=-180, max_value=180)
+
+    class Meta:
+        model = Profile
+        fields = [
+            'business_name',
+            'phone',
+            'cluster',
+            'zone',
+            'address',
+            'date_of_birth',
+            'sells',
+            'buys',
+            'carbon_impact',
+            'research_consent',
+            'verified',
+            'avatar',
+            'avatar_url',
+            'display_avatar_url',
+            'lat',
+            'lng',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['verified', 'date_of_birth', 'created_at', 'updated_at']
+
+    def validate(self, attrs):
+        if attrs.get('avatar') is not None:
+            attrs['avatar'] = validate_uploaded_image(attrs['avatar'])
+        avatar_url = attrs.get('avatar_url')
+        if avatar_url and not self._is_safe_image_url(avatar_url):
+            raise serializers.ValidationError(
+                {'avatar_url': 'Avatar URLs must use HTTPS or this API’s media path.'}
+            )
+        lat_provided = 'lat' in attrs
+        lng_provided = 'lng' in attrs
+        if lat_provided != lng_provided:
+            raise serializers.ValidationError(
+                {'lat': 'Latitude and longitude must be provided together.'}
+            )
+
+        address = attrs.get('address', getattr(self.instance, 'address', '')).strip()
+        address_changed = (
+            self.instance is not None
+            and 'address' in attrs
+            and address != self.instance.address
+        )
+        if address_changed and not (lat_provided and lng_provided):
+            raise serializers.ValidationError(
+                {'address': 'Resolve the updated address to coordinates before saving.'}
+            )
+
+        effective_lat = attrs.get('lat', getattr(self.instance, 'lat', None))
+        effective_lng = attrs.get('lng', getattr(self.instance, 'lng', None))
+        if address and (effective_lat is None or effective_lng is None):
+            raise serializers.ValidationError(
+                {'address': 'A saved address must have resolved latitude and longitude.'}
+            )
+        return attrs
+
+    def _is_safe_image_url(self, value):
+        if value.startswith('https://') or value.startswith('/media/'):
+            return True
+        request = self.context.get('request')
+        return bool(request and value.startswith(request.build_absolute_uri('/media/')))
+
+class UserSerializer(serializers.ModelSerializer):
+    profile = ProfileSerializer(read_only=True)
+
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'profile']
+
+class SignupSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+    password = serializers.CharField(write_only=True, required=True, min_length=8)
+    date_of_birth = serializers.DateField(required=True)
+    business_name = serializers.CharField(required=False, allow_blank=True, default='')
+    cluster = serializers.CharField(required=False, default='Ogba')
+    phone = serializers.CharField(required=False, allow_blank=True, default='')
+    sells = serializers.BooleanField(required=False, default=False)
+    buys = serializers.BooleanField(required=False, default=False)
+    carbon_impact = serializers.BooleanField(required=False, default=False)
+    research_consent = serializers.BooleanField(required=False, default=False)
+
+    def validate_date_of_birth(self, value):
+        today = date.today()
+        try:
+            eighteenth_birthday = value.replace(year=value.year + 18)
+        except ValueError:
+            eighteenth_birthday = value.replace(year=value.year + 18, day=28)
+        if eighteenth_birthday > today:
+            raise serializers.ValidationError('You must be at least 18 years old to sign up.')
+        return value
+
+    def validate_email(self, value):
+        if User.objects.filter(email__iexact=value).exists():
+            raise serializers.ValidationError("An account with this email already exists.")
+        return value.lower()
+
+    def validate_password(self, value):
+        email = self.initial_data.get('email', '')
+        candidate = User(username=email, email=email)
+        try:
+            validate_password(value, candidate)
+        except ValidationError as error:
+            raise serializers.ValidationError(error.messages) from error
+        return value
+
+    def create(self, validated_data):
+        email = validated_data['email']
+        password = validated_data['password']
+
+        with transaction.atomic():
+            user = User.objects.create_user(
+                username=email,
+                email=email,
+                password=password
+            )
+            profile = user.profile
+            profile.date_of_birth = validated_data['date_of_birth']
+            profile.business_name = validated_data.get('business_name', '')
+            profile.cluster = validated_data.get('cluster', 'Ogba')
+            profile.phone = validated_data.get('phone', '')
+            profile.sells = validated_data.get('sells', False)
+            profile.buys = validated_data.get('buys', False)
+            profile.carbon_impact = validated_data.get('carbon_impact', False)
+            profile.research_consent = validated_data.get('research_consent', False)
+            profile.save()
+
+        return user
+
+# ─── Classification Serializer ───────────────────────────────────────────────
+
+class ClassificationSerializer(serializers.ModelSerializer):
+    confidence_pct = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Classification
+        fields = [
+            'id',
+            'predicted_material',
+            'confidence',
+            'confidence_pct',
+            'overridden',
+            'final_material',
+            'model_id',
+            'raw_labels',
+            'created_at',
+        ]
+
+    def get_confidence_pct(self, obj) -> int:
+        return int(round(float(obj.confidence) * 100))
+
+# ─── Listing Serializers ─────────────────────────────────────────────────────
+
+class ListingSerializer(serializers.ModelSerializer):
+    weight_kg = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
+    price_ngn = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        min_value=Decimal('0.01'),
+        allow_null=True,
+        required=False,
+    )
+    seller_id = serializers.CharField(source='seller.id', read_only=True)
+    seller_name = serializers.SerializerMethodField()
+    seller_cluster = serializers.SerializerMethodField()
+    verified = serializers.SerializerMethodField()
+    address = serializers.SerializerMethodField()
+    lat = serializers.SerializerMethodField()
+    lng = serializers.SerializerMethodField()
+    primary_photo_url = serializers.ReadOnlyField()
+    all_photos = serializers.ReadOnlyField()
+    distance = serializers.SerializerMethodField()
+    co2_saved = serializers.SerializerMethodField()
+    conf = serializers.SerializerMethodField()
+    classification = ClassificationSerializer(read_only=True)
+
+    class Meta:
+        model = Listing
+        fields = [
+            'id',
+            'seller_id',
+            'seller_name',
+            'seller_cluster',
+            'verified',
+            'title',
+            'material',
+            'weight_kg',
+            'price_ngn',
+            'status',
+            'photo',
+            'photo_url',
+            'primary_photo_url',
+            'photo_urls',
+            'all_photos',
+            'zone',
+            'address',
+            'lat',
+            'lng',
+            'views',
+            'distance',
+            'co2_saved',
+            'conf',
+            'classification',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['id', 'status', 'views', 'created_at', 'updated_at']
+
+    def get_seller_name(self, obj) -> str:
+        profile = getattr(obj.seller, 'profile', None)
+        return (profile.business_name if profile and profile.business_name else None) or "EcoLoop Seller"
+
+    def validate_photo(self, value):
+        return validate_uploaded_image(value) if value else value
+
+    def validate_photo_url(self, value):
+        if value and not self._is_safe_image_url(value):
+            raise serializers.ValidationError('Photo URLs must use HTTPS or this API’s media path.')
+        return value
+
+    def validate_photo_urls(self, value):
+        if not isinstance(value, list) or len(value) > 6:
+            raise serializers.ValidationError('Provide at most 6 photo URLs.')
+        if any(not isinstance(url, str) or not self._is_safe_image_url(url) for url in value):
+            raise serializers.ValidationError('Photo URLs must use HTTPS or this API’s media path.')
+        return value
+
+    def _is_safe_image_url(self, value):
+        if value.startswith('https://') or value.startswith('/media/'):
+            return True
+        request = self.context.get('request')
+        return bool(request and value.startswith(request.build_absolute_uri('/media/')))
+
+    def get_seller_cluster(self, obj) -> str:
+        profile = getattr(obj.seller, 'profile', None)
+        return (profile.cluster if profile else obj.zone) or "Ogba"
+
+    def get_verified(self, obj) -> bool:
+        profile = getattr(obj.seller, 'profile', None)
+        return bool(profile.verified if profile else False)
+
+    def get_address(self, obj) -> str:
+        request = self.context.get('request')
+        if request and request.user.is_authenticated and request.user.id == obj.seller_id:
+            return obj.address
+        return ''
+
+    def _coordinates(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated and request.user.id == obj.seller_id:
+            return obj.lat, obj.lng
+        return get_coords_for_zone(obj.zone)
+
+    def get_lat(self, obj) -> float:
+        return self._coordinates(obj)[0]
+
+    def get_lng(self, obj) -> float:
+        return self._coordinates(obj)[1]
+
+    def get_conf(self, obj) -> int:
+        cls = getattr(obj, 'classification', None)
+        if cls:
+            return int(round(float(cls.confidence) * 100))
+        return 80
+
+    def get_co2_saved(self, obj) -> int:
+        return int(calculate_co2_kg(obj.weight_kg, obj.material))
+
+    def get_distance(self, obj) -> float:
+        request = self.context.get('request')
+        viewer_cluster = None
+        if request and request.user.is_authenticated and hasattr(request.user, 'profile'):
+            viewer_cluster = request.user.profile.cluster
+        if not viewer_cluster and request:
+            viewer_cluster = request.query_params.get('cluster')
+
+        viewer_lat, viewer_lon = get_coords_for_zone(viewer_cluster or 'Ogba')
+        if request and request.user.is_authenticated and hasattr(request.user, 'profile'):
+            viewer_lat = request.user.profile.lat or viewer_lat
+            viewer_lon = request.user.profile.lng or viewer_lon
+        if request:
+            try:
+                lat = float(request.query_params.get('lat', ''))
+                lng = float(request.query_params.get('lng', ''))
+                if -90 <= lat <= 90 and -180 <= lng <= 180:
+                    viewer_lat, viewer_lon = lat, lng
+            except (TypeError, ValueError):
+                pass
+        listing_lat = obj.lat or viewer_lat
+        listing_lon = obj.lng or viewer_lon
+
+        return haversine_km(viewer_lat, viewer_lon, listing_lat, listing_lon)
+
+class ListingCreateSerializer(serializers.ModelSerializer):
+    weight_kg = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
+    price_ngn = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        min_value=Decimal('0.01'),
+        allow_null=True,
+        required=False,
+    )
+    lat = serializers.FloatField(required=False, allow_null=True, min_value=-90, max_value=90)
+    lng = serializers.FloatField(required=False, allow_null=True, min_value=-180, max_value=180)
+    predicted_material = serializers.ChoiceField(choices=MaterialCategory.choices, required=False)
+    confidence = serializers.DecimalField(max_digits=5, decimal_places=4, required=False, default=Decimal('0.85'))
+    overridden = serializers.BooleanField(required=False, default=False)
+    model_id = serializers.CharField(required=False, default='hf-endpoint', allow_blank=True)
+    raw_labels = serializers.JSONField(required=False, default=dict)
+    is_draft = serializers.BooleanField(write_only=True, required=False, default=False)
+
+    class Meta:
+        model = Listing
+        fields = [
+            'id',
+            'title',
+            'material',
+            'weight_kg',
+            'price_ngn',
+            'status',
+            'photo',
+            'photo_url',
+            'photo_urls',
+            'zone',
+            'address',
+            'lat',
+            'lng',
+            'predicted_material',
+            'confidence',
+            'overridden',
+            'model_id',
+            'raw_labels',
+            'is_draft',
+        ]
+
+    def validate(self, attrs):
+        if attrs.get('photo') is not None:
+            attrs['photo'] = validate_uploaded_image(attrs['photo'])
+        photo_url = attrs.get('photo_url')
+        if photo_url and not self._is_safe_image_url(photo_url):
+            raise serializers.ValidationError(
+                {'photo_url': 'Photo URLs must use HTTPS or this API’s media path.'}
+            )
+        photo_urls = attrs.get('photo_urls', [])
+        if not isinstance(photo_urls, list) or len(photo_urls) > 6:
+            raise serializers.ValidationError({'photo_urls': 'Provide at most 6 photo URLs.'})
+        if any(not isinstance(url, str) or not self._is_safe_image_url(url) for url in photo_urls):
+            raise serializers.ValidationError(
+                {'photo_urls': 'Photo URLs must use HTTPS or this API’s media path.'}
+            )
+        lat_provided = 'lat' in attrs
+        lng_provided = 'lng' in attrs
+        if lat_provided != lng_provided:
+            raise serializers.ValidationError(
+                {'lat': 'Latitude and longitude must be provided together.'}
+            )
+        return attrs
+
+    def _is_safe_image_url(self, value):
+        if value.startswith('https://') or value.startswith('/media/'):
+            return True
+        request = self.context.get('request')
+        return bool(request and value.startswith(request.build_absolute_uri('/media/')))
+
+    def create(self, validated_data):
+        pred_mat = validated_data.pop('predicted_material', validated_data.get('material'))
+        conf = validated_data.pop('confidence', Decimal('0.85'))
+        overridden = validated_data.pop('overridden', False)
+        model_id = validated_data.pop('model_id', 'hf-endpoint')
+        raw_labels = validated_data.pop('raw_labels', None)
+        is_draft = validated_data.pop('is_draft', False)
+
+        request = self.context.get('request')
+        validated_data['seller'] = request.user
+        validated_data['status'] = ListingStatus.DRAFT if is_draft else ListingStatus.LIVE
+
+        with transaction.atomic():
+            listing = Listing.objects.create(**validated_data)
+            Classification.objects.create(
+                listing=listing,
+                predicted_material=pred_mat,
+                confidence=conf,
+                overridden=overridden,
+                final_material=listing.material,
+                model_id=model_id,
+                raw_labels=raw_labels,
+            )
+
+        return listing
+
+# ─── Transaction Serializers ─────────────────────────────────────────────────
+
+class TransactionSerializer(serializers.ModelSerializer):
+    listing_id = serializers.CharField(source='listing.id', read_only=True)
+    listing_title = serializers.CharField(source='listing.title', read_only=True)
+    listing_material = serializers.CharField(source='listing.material', read_only=True)
+    listing_weight = serializers.DecimalField(source='listing.weight_kg', max_digits=12, decimal_places=2, read_only=True)
+    listing_price = serializers.DecimalField(source='listing.price_ngn', max_digits=14, decimal_places=2, read_only=True)
+    amount_ngn = serializers.DecimalField(max_digits=14, decimal_places=2, read_only=True)
+    counterparty_name = serializers.SerializerMethodField()
+    counterparty_id = serializers.SerializerMethodField()
+    co2e_kg = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DealTransaction
+        fields = [
+            'id',
+            'listing_id',
+            'listing_title',
+            'listing_material',
+            'listing_weight',
+            'listing_price',
+            'amount_ngn',
+            'currency',
+            'buyer_id',
+            'seller_id',
+            'counterparty_name',
+            'counterparty_id',
+            'status',
+            'payment_ref',
+            'paid_at',
+            'completed_at',
+            'co2e_kg',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'status',
+            'payment_ref',
+            'paid_at',
+            'completed_at',
+            'created_at',
+            'updated_at',
+            'amount_ngn',
+            'currency',
+        ]
+
+    def get_counterparty_id(self, obj) -> str:
+        request = self.context.get('request')
+        if request and request.user.id == obj.buyer_id:
+            return str(obj.seller_id)
+        return str(obj.buyer_id)
+
+    def get_counterparty_name(self, obj) -> str:
+        request = self.context.get('request')
+        target_user = obj.seller if request and request.user.id == obj.buyer_id else obj.buyer
+        profile = getattr(target_user, 'profile', None)
+        return (profile.business_name if profile and profile.business_name else None) or "EcoLoop User"
+
+    def get_co2e_kg(self, obj) -> int | None:
+        rec = getattr(obj, 'carbon_record', None)
+        return int(rec.co2e_kg) if rec else None
+
+
+class DisputeSerializer(serializers.ModelSerializer):
+    raised_by_id = serializers.CharField(source='raised_by.id', read_only=True)
+    transaction_id = serializers.UUIDField()
+
+    class Meta:
+        model = Dispute
+        fields = [
+            'id',
+            'transaction_id',
+            'raised_by_id',
+            'reason',
+            'status',
+            'resolution_note',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = [
+            'id',
+            'raised_by_id',
+            'status',
+            'resolution_note',
+            'created_at',
+            'updated_at',
+        ]
+
+    def validate_reason(self, value):
+        if not value.strip():
+            raise serializers.ValidationError('A reason is required.')
+        return value.strip()
+
+    def validate_transaction_id(self, value):
+        request = self.context['request']
+        txn = DealTransaction.objects.filter(pk=value).first()
+        if txn is None:
+            raise serializers.ValidationError('Transaction not found.')
+        if txn.buyer_id != request.user.id:
+            raise serializers.ValidationError('Only the buyer can raise a dispute.')
+        if txn.paid_at is None:
+            raise serializers.ValidationError('A dispute requires a paid transaction.')
+        if txn.disputes.filter(status='Open').exists():
+            raise serializers.ValidationError('This transaction already has an open dispute.')
+        return value
+
+    def create(self, validated_data):
+        transaction_id = validated_data.pop('transaction_id')
+        return Dispute.objects.create(
+            transaction_id=transaction_id,
+            raised_by=self.context['request'].user,
+            **validated_data,
+        )
+
+
+# ─── Message Serializers ─────────────────────────────────────────────────────
+
+class MessageSerializer(serializers.ModelSerializer):
+    body = serializers.CharField(max_length=5000, allow_blank=True, trim_whitespace=False)
+    me = serializers.SerializerMethodField()
+    sender_name = serializers.SerializerMethodField()
+    sender_avatar_url = serializers.SerializerMethodField()
+    time = serializers.SerializerMethodField()
+    reply_text = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Message
+        fields = [
+            'id',
+            'listing',
+            'sender',
+            'recipient',
+            'body',
+            'reply_to',
+            'reply_text',
+            'image_url',
+            'attachment',
+            'attachment_name',
+            'attachment_mime',
+            'created_at',
+            'me',
+            'sender_name',
+            'sender_avatar_url',
+            'time',
+        ]
+        read_only_fields = ['id', 'sender', 'attachment', 'created_at']
+
+    def get_me(self, obj) -> bool:
+        request = self.context.get('request')
+        return bool(request and request.user.is_authenticated and obj.sender_id == request.user.id)
+
+    def get_sender_name(self, obj) -> str:
+        profile = getattr(obj.sender, 'profile', None)
+        return (profile.business_name if profile and profile.business_name else None) or "EcoLoop User"
+
+    def get_sender_avatar_url(self, obj) -> str | None:
+        profile = getattr(obj.sender, 'profile', None)
+        return profile.display_avatar_url if profile else None
+
+    def get_time(self, obj) -> str:
+        return obj.created_at.strftime('%H:%M')
+
+    def get_reply_text(self, obj) -> str | None:
+        if not obj.reply_to:
+            return None
+        if (
+            obj.reply_to.listing_id != obj.listing_id
+            or {obj.reply_to.sender_id, obj.reply_to.recipient_id}
+            != {obj.sender_id, obj.recipient_id}
+        ):
+            return None
+        return obj.reply_to.body
+
+    def validate_image_url(self, value):
+        request = self.context.get('request')
+        api_media_prefix = request.build_absolute_uri('/media/') if request else ''
+        if value and not (
+            value.startswith(('https://', '/media/'))
+            or (api_media_prefix and value.startswith(api_media_prefix))
+        ):
+            raise serializers.ValidationError('Image attachments must use HTTPS or the media path.')
+        return value
+
+    def validate(self, attrs):
+        request = self.context['request']
+        sender = request.user
+        recipient = attrs.get('recipient', getattr(self.instance, 'recipient', None))
+        listing = attrs.get('listing', getattr(self.instance, 'listing', None))
+        reply_to = attrs.get('reply_to', getattr(self.instance, 'reply_to', None))
+
+        if self.instance is not None:
+            raise serializers.ValidationError('Sent messages cannot be edited.')
+        if not listing or not recipient or sender.pk == recipient.pk:
+            raise serializers.ValidationError('A listing and a different recipient are required.')
+        existing_thread = Message.objects.filter(
+            listing=listing,
+        ).filter(
+            Q(sender=sender, recipient=recipient) | Q(sender=recipient, recipient=sender)
+        ).exists()
+        if recipient.pk != listing.seller_id and not existing_thread:
+            raise serializers.ValidationError(
+                {'recipient': 'The recipient must be the listing seller or an existing thread participant.'}
+            )
+        if recipient.pk == listing.seller_id and sender.pk != listing.seller_id:
+            is_reserved_for_sender = listing.transactions.filter(
+                buyer=sender,
+                status=TransactionStatus.RESERVED,
+            ).exists()
+            if (
+                listing.status != ListingStatus.LIVE
+                and not is_reserved_for_sender
+                and not existing_thread
+            ):
+                raise serializers.ValidationError(
+                    {'listing': 'New conversations can only start for available listings.'}
+                )
+        if reply_to and (
+            reply_to.listing_id != listing.pk
+            or {reply_to.sender_id, reply_to.recipient_id} != {sender.pk, recipient.pk}
+        ):
+            raise serializers.ValidationError(
+                {'reply_to': 'The referenced message must belong to this conversation.'}
+            )
+        if attrs.get('attachment') is not None:
+            attrs['attachment'] = validate_uploaded_image(attrs['attachment'])
+        return attrs
+
+# ─── Carbon Record Serializer ────────────────────────────────────────────────
+
+class CarbonRecordSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CarbonRecord
+        fields = '__all__'
+
+
+# ─── Request / Utility Serializers ──────────────────────────────────────────
+
+class LoginRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True, help_text="Registered user email")
+    password = serializers.CharField(required=True, write_only=True)
+
+
+class PaystackInitializeSerializer(serializers.Serializer):
+    listingId = serializers.UUIDField(required=True, help_text="ID of the listing being purchased")
+
+
+class PaystackVerifySerializer(serializers.Serializer):
+    reference = serializers.CharField(required=True, help_text="Paystack transaction reference")
+    listingId = serializers.UUIDField(required=True, help_text="ID of the purchased listing")
+
+
+class ClassifyRequestSerializer(serializers.Serializer):
+    image = serializers.ImageField(required=False, help_text="Waste material image file")
+    imageUrl = serializers.URLField(required=False, help_text="URL to waste material image")
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    password = serializers.CharField(write_only=True, min_length=8)
+
+
+class DetailResponseSerializer(serializers.Serializer):
+    detail = serializers.CharField()
+
+
+class MediaUploadResponseSerializer(serializers.Serializer):
+    path = serializers.CharField()
+    url = serializers.URLField()
+
+
+class PaystackInitializeResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    reference = serializers.CharField()
+    transactionId = serializers.UUIDField()
+    listingId = serializers.UUIDField()
+    listingTitle = serializers.CharField()
+    amountNgn = serializers.DecimalField(max_digits=12, decimal_places=2)
+    amountKobo = serializers.IntegerField()
+    publicKey = serializers.CharField()
+
+
+class PaystackVerifyResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+    reference = serializers.CharField()
+    listingId = serializers.UUIDField()
+    amountNgn = serializers.DecimalField(max_digits=12, decimal_places=2)
+    message = serializers.CharField()

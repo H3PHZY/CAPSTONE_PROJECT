@@ -7,24 +7,16 @@ import { NAV_LINKS } from "@/lib/navigation";
 
 export function AppNav() {
   const pathname = usePathname();
-  const { isAuthenticated, openAuth, prefs } = useAuth();
+  const { isAuthenticated, openAuth } = useAuth();
 
   function isActive(href: string) {
     if (href === "/") return pathname === "/";
     return pathname === href || pathname.startsWith(`${href}/`);
   }
 
-  const links = NAV_LINKS.filter((link) => {
-    if ("feature" in link && link.feature === "carbonImpact") {
-      // Hide until logged in with the preference enabled
-      return isAuthenticated && prefs.carbonImpact;
-    }
-    return true;
-  });
-
   return (
     <nav className="app-nav" aria-label="Primary">
-      {links.map((link) => {
+      {NAV_LINKS.map((link) => {
         const active = isActive(link.href);
         const locked = !isAuthenticated && !isPublicPath(link.href);
 

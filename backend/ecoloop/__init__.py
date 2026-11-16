@@ -1,0 +1,2 @@
+# EcoLoop Django Project Package
+

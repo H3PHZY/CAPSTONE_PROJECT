@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { formatPriceNgn } from "@/lib/listings";
 import {
   fetchTransactionById,
+  formatTransactionAmount,
   transactionRef,
   type TransactionView,
 } from "@/lib/transactions";
@@ -23,34 +23,43 @@ function formatWhen(iso: string | null) {
 
 export function TransactionDetailPage({ id }: { id: string }) {
   const { user, ready, openAuth } = useAuth();
-  const [txn, setTxn] = useState<TransactionView | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<{
+    key: string;
+    txn: TransactionView | null;
+    error: string | null;
+  } | null>(null);
+  const requestKey = ready && user ? `${id}:${user.id}` : null;
+  const currentResult = requestKey && result?.key === requestKey ? result : null;
+  const txn = currentResult?.txn ?? null;
+  const error = currentResult?.error ?? null;
+  const loading = Boolean(requestKey && !currentResult);
 
   useEffect(() => {
     if (!ready) return;
     if (!user) {
-      setLoading(false);
       openAuth("login", `/transactions/${id}`);
       return;
     }
 
     let alive = true;
-    setLoading(true);
-    setError(null);
-    void fetchTransactionById(id, user.id)
+    const key = `${id}:${user.id}`;
+    void fetchTransactionById(id)
       .then((row) => {
         if (!alive) return;
-        if (!row) setError("This transaction was not found, or you are not a party to it.");
-        setTxn(row);
+        setResult({
+          key,
+          txn: row,
+          error: row ? null : "This transaction was not found, or you are not a party to it.",
+        });
       })
       .catch((err) => {
         if (alive) {
-          setError(err instanceof Error ? err.message : "Could not load this transaction");
+          setResult({
+            key,
+            txn: null,
+            error: err instanceof Error ? err.message : "Could not load this transaction",
+          });
         }
-      })
-      .finally(() => {
-        if (alive) setLoading(false);
       });
 
     return () => {
@@ -97,7 +106,7 @@ export function TransactionDetailPage({ id }: { id: string }) {
   }
 
   const selling = txn.sellerId === user.id;
-  const priced = Boolean(txn.priceNgn && txn.priceNgn > 0);
+  const priced = Boolean(txn.amountNgn && txn.amountNgn > 0);
 
   return (
     <div className="page-shell page-shell--wide">
@@ -162,18 +171,11 @@ export function TransactionDetailPage({ id }: { id: string }) {
             <div>
               <dt>Amount</dt>
               <dd className="txn-detail-amount">
-                {priced ? `₦${formatPriceNgn(txn.priceNgn)}` : "No price set"}
+                {priced
+                  ? formatTransactionAmount(txn.amountNgn, txn.currency)
+                  : "No price set"}
               </dd>
             </div>
-            {txn.listingPriceNgn != null &&
-            txn.listingPriceNgn > 0 &&
-            priced &&
-            Math.round(txn.listingPriceNgn) !== Math.round(txn.priceNgn ?? 0) ? (
-              <div>
-                <dt>Listing asking</dt>
-                <dd>₦{formatPriceNgn(txn.listingPriceNgn)}</dd>
-              </div>
-            ) : null}
             <div>
               <dt>Payment</dt>
               <dd>{txn.paidAt ? "Confirmed" : priced ? "Awaiting payment" : "Not required"}</dd>

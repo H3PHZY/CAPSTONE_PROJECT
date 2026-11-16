@@ -3,12 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
-import { fetchMyListings, formatPriceNgn } from "@/lib/listings";
+import { fetchMyListings, publishOwnedListing } from "@/lib/listings";
 import {
   fetchMyTransactions,
+  formatTransactionAmount,
   type TransactionView,
 } from "@/lib/transactions";
 import type { ListingStatus, MyListing } from "@/lib/types";
+
+const EMPTY_LISTINGS: MyListing[] = [];
+const EMPTY_TRANSACTIONS: TransactionView[] = [];
 
 function statusClass(status: ListingStatus) {
   return `status-pill status-pill--${status.toLowerCase()}`;
@@ -16,32 +20,50 @@ function statusClass(status: ListingStatus) {
 
 export function MyListingsPage() {
   const { user, profile, ready } = useAuth();
-  const [rows, setRows] = useState<MyListing[]>([]);
-  const [txns, setTxns] = useState<TransactionView[]>([]);
+  const [listingRows, setListingRows] = useState<MyListing[]>([]);
+  const [transactionRows, setTransactionRows] = useState<TransactionView[]>([]);
   const [pipeline, setPipeline] = useState<
     { stage: string; count: number; items: { t: string; s: string; href: string }[] }[]
   >([]);
-  const [loading, setLoading] = useState(true);
+  const [loadedUserId, setLoadedUserId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+  const rows =
+    user && loadedUserId === user.id ? listingRows : EMPTY_LISTINGS;
+  const txns =
+    user && loadedUserId === user.id ? transactionRows : EMPTY_TRANSACTIONS;
+  const loading = !ready || Boolean(user && loadedUserId !== user.id);
+
+  async function publishDraft(id: string) {
+    setPublishingId(id);
+    setError(null);
+    try {
+      await publishOwnedListing(id);
+      setListingRows((current) =>
+        current.map((listing) =>
+          listing.id === id ? { ...listing, status: "Live" } : listing
+        )
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not publish draft");
+    } finally {
+      setPublishingId(null);
+    }
+  }
 
   useEffect(() => {
     if (!ready) return;
-    if (!user) {
-      setRows([]);
-      setTxns([]);
-      setLoading(false);
-      return;
-    }
+    if (!user) return;
 
     let active = true;
-    setLoading(true);
-    setError(null);
-    void Promise.all([fetchMyListings(user.id), fetchMyTransactions(user.id)])
+    void Promise.all([fetchMyListings(), fetchMyTransactions()])
       .then(([listings, txns]) => {
         if (!active) return;
-        setRows(listings);
+        setListingRows(listings);
+        setTransactionRows(txns.filter((t) => t.sellerId === user.id));
+        setLoadedUserId(user.id);
+        setError(null);
         const selling = txns.filter((t) => t.sellerId === user.id);
-        setTxns(selling);
         const interest = selling.filter((t) => t.status === "Interest");
         const reserved = selling.filter((t) => t.status === "Reserved");
         const completed = selling.filter((t) => t.status === "Completed");
@@ -70,7 +92,9 @@ export function MyListingsPage() {
             items: completed.slice(0, 3).map((t) => ({
               t: t.listingTitle,
               s: `${t.counterpartyName}${
-                t.priceNgn && t.priceNgn > 0 ? ` · ₦${formatPriceNgn(t.priceNgn)}` : ""
+                t.amountNgn && t.amountNgn > 0
+                  ? ` · ${formatTransactionAmount(t.amountNgn, t.currency)}`
+                  : ""
               }${t.co2eKg != null ? ` · ${t.co2eKg} kg CO₂e` : ""}`,
               href: `/transactions/${t.id}`,
             })),
@@ -80,9 +104,7 @@ export function MyListingsPage() {
       .catch((err) => {
         if (!active) return;
         setError(err instanceof Error ? err.message : "Could not load your listings");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
+        setLoadedUserId(user.id);
       });
 
     return () => {
@@ -92,7 +114,8 @@ export function MyListingsPage() {
 
   const finance = useMemo(() => {
     const priceOf = (t: TransactionView) =>
-      t.priceNgn && t.priceNgn > 0 ? t.priceNgn : 0;
+      t.amountNgn && t.amountNgn > 0 ? t.amountNgn : 0;
+    const currency = txns.find((t) => t.amountNgn != null)?.currency ?? "NGN";
     const paid = txns.filter((t) => t.paidAt);
     const earned = paid.reduce((sum, t) => sum + priceOf(t), 0);
     const awaiting = txns.filter(
@@ -102,12 +125,12 @@ export function MyListingsPage() {
     return [
       {
         k: "RECEIVED",
-        v: `₦${formatPriceNgn(earned)}`,
+        v: formatTransactionAmount(earned, currency),
         sub: `${paid.length} paid exchange${paid.length === 1 ? "" : "s"}`,
       },
       {
         k: "AWAITING PAYMENT",
-        v: `₦${formatPriceNgn(awaitingTotal)}`,
+        v: formatTransactionAmount(awaitingTotal, currency),
         sub: `${awaiting.length} reserved deal${awaiting.length === 1 ? "" : "s"}`,
       },
     ];
@@ -215,9 +238,21 @@ export function MyListingsPage() {
             </div>
             <div className="mine-cell mine-cell--mono">{m.views}</div>
             <div>
-              <Link href={`/listings/${m.id}/manage`} className="btn btn-outline btn-xs">
-                Manage
-              </Link>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {m.status === "Draft" ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-xs"
+                    onClick={() => void publishDraft(m.id)}
+                    disabled={publishingId !== null}
+                  >
+                    {publishingId === m.id ? "Publishing…" : "Publish"}
+                  </button>
+                ) : null}
+                <Link href={`/listings/${m.id}/manage`} className="btn btn-outline btn-xs">
+                  Manage
+                </Link>
+              </div>
             </div>
           </div>
         ))}

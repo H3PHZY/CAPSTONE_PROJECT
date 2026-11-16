@@ -1,11 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Select } from "@/components/ui/Select";
 import { ProfileAvatar } from "@/components/ui/ProfileAvatar";
 import { useAuth } from "@/lib/auth-context";
+import {
+  GoogleMapLocationPicker,
+  type SelectedLocation,
+} from "@/components/marketplace/GoogleMapLocationPicker";
 import { uploadProfileAvatar, validateProfileAvatar } from "@/lib/profile-avatars";
 
 export function ProfilePage() {
@@ -25,10 +28,16 @@ export function ProfilePage() {
   const [businessName, setBusinessName] = useState("");
   const [phone, setPhone] = useState("");
   const [cluster, setCluster] = useState("Ogba");
+  const [location, setLocation] = useState<SelectedLocation>({
+    address: "",
+    lat: null,
+    lng: null,
+  });
   const [sells, setSells] = useState(true);
   const [buys, setBuys] = useState(true);
   const [carbonImpact, setCarbonImpact] = useState(false);
   const [email, setEmail] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -45,6 +54,14 @@ export function ProfilePage() {
   const [savingImpact, setSavingImpact] = useState(false);
   const [savingCreds, setSavingCreds] = useState(false);
   const avatarRef = useRef<HTMLInputElement>(null);
+  const [appliedProfileKey, setAppliedProfileKey] = useState<string | null>(null);
+  const [emailInitializedFor, setEmailInitializedFor] = useState<string | null>(null);
+
+  function hasUnresolvedLocation() {
+    return Boolean(
+      location.address.trim() && (location.lat == null || location.lng == null)
+    );
+  }
 
   useEffect(() => {
     if (!ready) return;
@@ -54,19 +71,39 @@ export function ProfilePage() {
     }
   }, [ready, user, openAuth, router]);
 
-  useEffect(() => {
-    if (!profile) return;
+  const profileKey = profile
+    ? JSON.stringify([
+        profile.id,
+        profile.business_name,
+        profile.phone,
+        profile.cluster,
+        profile.address,
+        profile.lat,
+        profile.lng,
+        profile.sells,
+        profile.buys,
+        profile.carbon_impact,
+      ])
+    : null;
+  if (profile && profileKey !== appliedProfileKey) {
     setBusinessName(profile.business_name || "");
     setPhone(profile.phone || "");
     setCluster(profile.cluster || "Ogba");
+    setLocation({
+      address: profile.address || "",
+      lat: profile.lat,
+      lng: profile.lng,
+    });
     setSells(profile.sells);
     setBuys(profile.buys);
     setCarbonImpact(profile.carbon_impact);
-  }, [profile]);
+    setAppliedProfileKey(profileKey);
+  }
 
-  useEffect(() => {
-    if (user?.email) setEmail(user.email);
-  }, [user?.email]);
+  if (user?.email && user.id !== emailInitializedFor) {
+    setEmail(user.email);
+    setEmailInitializedFor(user.id);
+  }
 
   if (!ready || !user) {
     return (
@@ -80,6 +117,10 @@ export function ProfilePage() {
     e.preventDefault();
     setProfileMsg(null);
     setProfileErr(null);
+    if (hasUnresolvedLocation()) {
+      setProfileErr("Find the business address on the map before saving.");
+      return;
+    }
     setSavingProfile(true);
     try {
       await updateProfile({
@@ -89,6 +130,8 @@ export function ProfilePage() {
         sells,
         buys,
         carbonImpact,
+        zone: cluster,
+        ...location,
       });
       const nowVerified = Boolean(
         businessName.trim() && phone.trim() && (sells || buys)
@@ -109,6 +152,10 @@ export function ProfilePage() {
     e.preventDefault();
     setImpactMsg(null);
     setImpactErr(null);
+    if (hasUnresolvedLocation()) {
+      setImpactErr("Find the business address on the map before saving.");
+      return;
+    }
     setSavingImpact(true);
     try {
       await updateProfile({
@@ -118,11 +165,13 @@ export function ProfilePage() {
         sells,
         buys,
         carbonImpact,
+        zone: cluster,
+        ...location,
       });
       setImpactMsg(
         carbonImpact
-          ? "Carbon impact is on — you’ll see it in the navigation."
-          : "Carbon impact is off — the page is hidden from your navigation."
+          ? "Your carbon snapshot will appear on the dashboard."
+          : "Your carbon snapshot is hidden from the dashboard."
       );
     } catch (err) {
       setImpactErr(err instanceof Error ? err.message : "Could not save preference");
@@ -138,18 +187,24 @@ export function ProfilePage() {
     setSavingCreds(true);
     try {
       const notes: string[] = [];
-      if (email.trim() && email.trim() !== (user?.email || "")) {
-        await updateEmail(email);
+      const emailChanged = email.trim() !== (user?.email || "");
+      if ((emailChanged || password) && !currentPassword) {
+        throw new Error("Enter your current password to change account credentials.");
+      }
+      if (emailChanged) {
+        await updateEmail(email, currentPassword);
+        setEmail(email.trim());
         notes.push("Check your inbox to confirm the new email.");
       }
       if (password) {
         if (password.length < 8) throw new Error("Password must be at least 8 characters.");
         if (password !== confirmPassword) throw new Error("Passwords do not match.");
-        await updatePassword(password);
+        await updatePassword(password, currentPassword);
         setPassword("");
         setConfirmPassword("");
         notes.push("Password updated.");
       }
+      setCurrentPassword("");
       if (notes.length === 0) {
         setCredMsg("No credential changes to save.");
       } else {
@@ -229,7 +284,7 @@ export function ProfilePage() {
           <div className="profile-hero-meta">
             {user.email || "No email"} · {cluster}
             {profile?.verified ? " · Verified seller" : " · Not verified yet"}
-            {carbonImpact ? " · Carbon impact on" : ""}
+            {carbonImpact ? " · Carbon snapshot on" : ""}
           </div>
           <div className="profile-avatar-actions">
             <input
@@ -281,6 +336,17 @@ export function ProfilePage() {
         <form className="panel panel--pad" onSubmit={saveProfile}>
           <div className="panel-label">BUSINESS PROFILE</div>
           <div className="form-stack" style={{ marginTop: 14 }}>
+            <div>
+              <label className="field-label">Current password</label>
+              <input
+                type="password"
+                className="input"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                autoComplete="current-password"
+                placeholder="Required to change email or password"
+              />
+            </div>
             <div>
               <div className="field-label">What do you use EcoLoop for?</div>
               <div className="role-cards role-cards--compact">
@@ -337,6 +403,11 @@ export function ProfilePage() {
                 <div className="field-foot">Required for the marketplace Verified badge.</div>
               </div>
             </div>
+            <GoogleMapLocationPicker
+              value={location}
+              zone={cluster}
+              onChange={setLocation}
+            />
 
             {profileErr ? (
               <div className="field-foot" style={{ color: "oklch(0.52 0.13 30)" }}>
@@ -422,14 +493,14 @@ export function ProfilePage() {
           <div className="panel-label">OPTIONAL · CARBON IMPACT</div>
           <h2 className="profile-impact-optin-title">Track CO₂e from your exchanges</h2>
           <p className="profile-impact-optin-lede">
-            Opt in to unlock a private Carbon impact page. EcoLoop estimates how much CO₂e each
-            completed exchange keeps out of landfill using LCA reference factors. Figures are
-            estimates for feedback — not certified carbon offsets.
+            EcoLoop estimates how much CO₂e each completed exchange keeps out of landfill using
+            LCA reference factors. Figures are estimates for feedback — not certified carbon
+            offsets.
           </p>
           <ul className="profile-impact-optin-points">
-            <li>See diverted tonnes and CO₂e for your completed deals</li>
-            <li>Carbon impact appears in your navigation when enabled</li>
-            <li>You can turn this off any time — marketplace and messaging still work</li>
+            <li>Show your diverted CO₂e estimate on the dashboard</li>
+            <li>Keep the estimate private to your account</li>
+            <li>You can turn this off at any time</li>
           </ul>
         </div>
         <div className="profile-impact-optin-aside">
@@ -443,8 +514,8 @@ export function ProfilePage() {
               <strong>{carbonImpact ? "Opted in" : "Opt in"}</strong>
               <span className="profile-impact-toggle-sub">
                 {carbonImpact
-                  ? "Carbon impact page is available in nav"
-                  : "Enable the Carbon impact page"}
+                  ? "Carbon snapshot is shown on your dashboard"
+                  : "Show your carbon snapshot on the dashboard"}
               </span>
             </span>
           </label>
@@ -462,11 +533,6 @@ export function ProfilePage() {
             <button type="submit" className="btn btn-primary" disabled={savingImpact}>
               {savingImpact ? "Saving…" : "Save preference"}
             </button>
-            {carbonImpact ? (
-              <Link href="/impact" className="btn btn-outline">
-                Open Carbon impact
-              </Link>
-            ) : null}
           </div>
         </div>
       </form>

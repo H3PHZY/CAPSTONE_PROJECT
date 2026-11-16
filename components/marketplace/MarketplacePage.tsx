@@ -18,38 +18,62 @@ function priceNum(p: string) {
   return parseFloat(String(p).replace(/,/g, "")) || 0;
 }
 
+const EMPTY_LISTINGS: Listing[] = [];
+
 export function MarketplacePage() {
   const { profile } = useAuth();
+  const viewerLocation = useMemo(
+    () => ({
+      address: profile?.address || "",
+      lat: profile?.lat ?? null,
+      lng: profile?.lng ?? null,
+    }),
+    [profile?.address, profile?.lat, profile?.lng]
+  );
   const [q, setQ] = useState("");
   const [radius, setRadius] = useState<RadiusOption>("Within 10 km");
   const [cat, setCat] = useState<MaterialCategory | "All categories">("All categories");
   const [sort, setSort] = useState<SortOption>("Nearest first");
   const [verifiedOnly, setVerifiedOnly] = useState(false);
-  const [listings, setListings] = useState<Listing[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [listingResult, setListingResult] = useState<{
+    key: string;
+    listings: Listing[];
+    error: string | null;
+  } | null>(null);
+  const requestKey = JSON.stringify([
+    profile?.cluster,
+    viewerLocation.lat,
+    viewerLocation.lng,
+  ]);
+  const currentListingResult =
+    listingResult?.key === requestKey ? listingResult : null;
+  const listings = currentListingResult?.listings ?? EMPTY_LISTINGS;
+  const error = currentListingResult?.error ?? null;
+  const loading = Boolean(!currentListingResult);
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
-    setError(null);
-    void fetchLiveListings(profile?.cluster)
+    void fetchLiveListings(profile?.cluster, viewerLocation)
       .then((rows) => {
         if (!active) return;
-        setListings(rows);
+        setListingResult({ key: requestKey, listings: rows, error: null });
       })
       .catch((err) => {
         if (!active) return;
-        setError(err instanceof Error ? err.message : "Could not load listings");
-        setListings([]);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
+        setListingResult({
+          key: requestKey,
+          listings: [],
+          error: err instanceof Error ? err.message : "Could not load listings",
+        });
       });
     return () => {
       active = false;
     };
-  }, [profile?.cluster]);
+  }, [
+    requestKey,
+    profile?.cluster,
+    viewerLocation,
+  ]);
 
   const list = useMemo(() => {
     const max = RADII[radius] ?? 999;
@@ -150,7 +174,7 @@ export function MarketplacePage() {
           <div className="page-sub">
             {loading
               ? "Loading listings…"
-              : `${list.length} listings · ${cat.toLowerCase()} · ${radius.toLowerCase()} of Ogba Industrial Estate`}
+              : `${list.length} listings · ${cat.toLowerCase()} · ${radius.toLowerCase()} of ${viewerLocation.address || profile?.cluster || "Ogba"}`}
           </div>
         </div>
         <div className="live-pill">
