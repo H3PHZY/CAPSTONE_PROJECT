@@ -39,6 +39,7 @@ export function Footer() {
                 Create an account
               </button>
               <Link href="/marketplace">For buyers &amp; recyclers</Link>
+              <Link href="/privacy">Privacy Policy</Link>
               <a href="mailto:research@ecoloop.ng">Contact the research team</a>
             </div>
           </div>
