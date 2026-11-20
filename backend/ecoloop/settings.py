@@ -327,5 +327,8 @@ HF_MODEL_ID = os.environ.get('HF_MODEL_ID', 'yangy50/garbage-classification')
 HF_VIT_MODEL = os.environ.get('HF_VIT_MODEL', 'google/vit-base-patch16-224')
 HF_ENDPOINT_URL = os.environ.get('HF_ENDPOINT_URL', None)
 
-PAYSTACK_SECRET_KEY = os.environ.get('PAYSTACK_SECRET_KEY', '')
-PAYSTACK_PUBLIC_KEY = os.environ.get('NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY', '')
+PAYSTACK_SECRET_KEY = os.environ.get('PAYSTACK_SECRET_KEY', '').strip()
+PAYSTACK_PUBLIC_KEY = (
+    os.environ.get('PAYSTACK_PUBLIC_KEY', '')
+    or os.environ.get('NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY', '')
+).strip()

@@ -479,7 +479,11 @@ export function MessagesPage() {
   const isSeller = Boolean(user && active && user.id === active.sellerId);
   const isBuyer = Boolean(user && parties && user.id === parties.buyerId);
   const canAgree =
-    isSeller && Boolean(parties) && status === "Interest";
+    isSeller &&
+    Boolean(parties) &&
+    (!status || status === "Interest") &&
+    status !== "Reserved" &&
+    status !== "Completed";
   const canComplete =
     Boolean(parties) &&
     canManuallyCompleteTransaction(status, txn?.amountNgn, txn?.paidAt);
@@ -571,10 +575,18 @@ export function MessagesPage() {
                   >
                     View listing
                   </Link>
+                  {isBuyer && status !== "Reserved" && status !== "Completed" ? (
+                    <Link
+                      href={`/marketplace/${active.listingId}`}
+                      className="btn btn-primary btn-sm"
+                    >
+                      Pay on listing
+                    </Link>
+                  ) : null}
                   {canAgree ? (
                     <button
                       type="button"
-                      className="btn btn-outline btn-sm"
+                      className="btn btn-primary btn-sm"
                       onClick={() => void onMarkAgreed()}
                       disabled={acting}
                     >
@@ -603,7 +615,7 @@ export function MessagesPage() {
                 <div className="msgs-pay-hint">
                   Complete payment securely to finish reserving this listing.
                   <PaystackButton
-                    buyerEmail={user.email}
+                    buyerEmail={user.email || "buyer@ecoloop.ng"}
                     buyerId={user.id}
                     listingId={active.listingId}
                     priceFormatted={txn.amountNgn.toLocaleString("en-NG")}
