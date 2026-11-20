@@ -48,11 +48,16 @@ export function PaystackButton({
     try {
       const init = await initializePayment(listingId);
       transactionId = init.transactionId;
+      const publicKey =
+        init.publicKey ||
+        process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY ||
+        process.env.NEXT_PUBLIC_PAYSTACK_TEST_KEY ||
+        "pk_test_29571cee47495758f538fc8384ba18b70f527a83";
       ref = await openPaystack({
         email: buyerEmail,
         amountKobo: init.amountKobo,
         reference: init.reference,
-        publicKey: init.publicKey,
+        publicKey,
         label: listingTitle,
         metadata: { listingId, buyerId },
       });
