@@ -586,11 +586,21 @@ class TransactionViewSet(viewsets.ReadOnlyModelViewSet):
                     filters[field] = uuid.UUID(value) if field == 'listing_id' else int(value)
                 except (TypeError, ValueError):
                     return queryset.none()
+        # Order by best status first so COMPLETED/RESERVED appear before INTEREST
+        # when multiple rows exist for the same listing+buyer pair.
         return queryset.filter(**filters).select_related(
             'listing',
             'buyer__profile',
             'seller__profile',
             'carbon_record',
+        ).order_by(
+            Case(
+                When(status=TransactionStatus.COMPLETED, then=0),
+                When(status=TransactionStatus.RESERVED, then=1),
+                default=2,
+                output_field=IntegerField(),
+            ),
+            '-updated_at',
         )
 
     @action(detail=False, methods=['post'])
@@ -1113,11 +1123,22 @@ class PaystackInitializeView(views.APIView):
                         status=status.HTTP_400_BAD_REQUEST,
                     )
 
-                txn = DealTransaction.objects.select_for_update().filter(
-                    listing=listing,
-                    buyer=request.user,
-                    seller=listing.seller,
-                ).first()
+                # Find the best existing transaction for this buyer+listing (any status,
+                # any seller — in case a signal created an INTEREST row before the seller
+                # was explicitly set, e.g. via the first-message signal).
+                txn = (
+                    DealTransaction.objects.select_for_update()
+                    .filter(listing=listing, buyer=request.user)
+                    .order_by(
+                        Case(
+                            When(status=TransactionStatus.COMPLETED, then=0),
+                            When(status=TransactionStatus.RESERVED, then=1),
+                            default=2,
+                            output_field=IntegerField(),
+                        )
+                    )
+                    .first()
+                )
                 competing_deal = DealTransaction.objects.select_for_update().filter(
                     listing=listing,
                     status__in=[TransactionStatus.RESERVED, TransactionStatus.COMPLETED],
@@ -1175,6 +1196,7 @@ class PaystackInitializeView(views.APIView):
                         hold_expires_at=expires_at,
                     )
                 else:
+                    txn.seller = listing.seller
                     txn.status = TransactionStatus.RESERVED
                     txn.payment_ref = reference
                     txn.paid_at = None
@@ -1185,6 +1207,7 @@ class PaystackInitializeView(views.APIView):
                     txn.hold_expires_at = expires_at
                     txn.save(
                         update_fields=[
+                            'seller',
                             'status',
                             'payment_ref',
                             'paid_at',

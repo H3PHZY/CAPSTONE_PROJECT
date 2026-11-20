@@ -85,9 +85,6 @@ export function DashboardPage() {
           </div>
         </div>
         <div className="page-head-actions">
-          <Link href="/listings/new" className="btn btn-primary">
-            + New listing
-          </Link>
           <Link href="/marketplace" className="btn btn-outline">
             Browse marketplace
           </Link>

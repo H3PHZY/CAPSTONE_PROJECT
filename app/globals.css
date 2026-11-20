@@ -4581,11 +4581,11 @@ a.pipeline-item:hover {
 .txn-list-head,
 .txn-list-row {
   display: grid;
-  grid-template-columns: 108px minmax(0, 1.8fr) 72px minmax(0, 1.2fr) minmax(0, 0.9fr) minmax(0, 0.9fr) 88px 52px;
+  grid-template-columns: 108px minmax(0, 2fr) 72px minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr) 52px;
   gap: 12px;
   padding: 12px 18px;
   align-items: center;
-  min-width: 960px;
+  min-width: 860px;
 }
 
 .txn-list-head {

@@ -116,7 +116,7 @@ export function MyListingsPage() {
     const priceOf = (t: TransactionView) =>
       t.amountNgn && t.amountNgn > 0 ? t.amountNgn : 0;
     const currency = txns.find((t) => t.amountNgn != null)?.currency ?? "NGN";
-    const paid = txns.filter((t) => t.paidAt);
+    const paid = txns.filter((t) => t.paidAt || t.status === "Completed");
     const earned = paid.reduce((sum, t) => sum + priceOf(t), 0);
     const awaiting = txns.filter(
       (t) => t.status === "Reserved" && !t.paidAt && priceOf(t) > 0
@@ -137,14 +137,16 @@ export function MyListingsPage() {
   }, [txns]);
 
   const stats = useMemo(() => {
-    const live = rows.filter((r) => r.status === "Live").length;
-    const reserved = rows.filter((r) => r.status === "Reserved").length;
-    const sold = rows.filter((r) => r.status === "Sold").length;
+    const live = rows.filter((r) => r.status === "Live");
+    const reserved = rows.filter((r) => r.status === "Reserved");
+    const sold = rows.filter((r) => r.status === "Sold");
+    const liveWeight = live.reduce((sum, r) => sum + r.weight, 0);
+    const soldWeight = sold.reduce((sum, r) => sum + r.weight, 0);
     const views = rows.reduce((sum, r) => sum + r.views, 0);
     return [
-      { k: "LIVE", v: String(live), sub: "visible in marketplace" },
-      { k: "RESERVED", v: String(reserved), sub: "buyer hold" },
-      { k: "SOLD", v: String(sold), sub: "completed exchanges" },
+      { k: "LIVE", v: String(live.length), sub: `${liveWeight.toLocaleString()} kg available` },
+      { k: "RESERVED", v: String(reserved.length), sub: "buyer hold" },
+      { k: "SOLD", v: String(sold.length), sub: `${soldWeight.toLocaleString()} kg diverted` },
       { k: "VIEWS", v: String(views), sub: "across your listings" },
     ];
   }, [rows]);

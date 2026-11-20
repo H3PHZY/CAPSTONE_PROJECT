@@ -6,6 +6,8 @@ import { useAuth } from "@/lib/auth-context";
 import {
   fetchTransactionById,
   formatTransactionAmount,
+  markAsAgreed,
+  markExchangeCompleted,
   transactionRef,
   type TransactionView,
 } from "@/lib/transactions";
@@ -28,6 +30,8 @@ export function TransactionDetailPage({ id }: { id: string }) {
     txn: TransactionView | null;
     error: string | null;
   } | null>(null);
+  const [acting, setActing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const requestKey = ready && user ? `${id}:${user.id}` : null;
   const currentResult = requestKey && result?.key === requestKey ? result : null;
   const txn = currentResult?.txn ?? null;
@@ -66,6 +70,28 @@ export function TransactionDetailPage({ id }: { id: string }) {
       alive = false;
     };
   }, [ready, user, id, openAuth]);
+
+  async function handleMarkCompleted() {
+    if (!user || !txn) return;
+    setActing(true);
+    setActionError(null);
+    try {
+      await markExchangeCompleted({
+        listingId: txn.listingId,
+        buyerId: txn.buyerId,
+        sellerId: txn.sellerId,
+        actorId: user.id,
+      });
+      // Refetch to get updated status
+      const updated = await fetchTransactionById(id);
+      const key = `${id}:${user.id}`;
+      setResult({ key, txn: updated, error: updated ? null : "Transaction not found." });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not complete the exchange.");
+    } finally {
+      setActing(false);
+    }
+  }
 
   if (!ready || loading) {
     return (
@@ -195,6 +221,22 @@ export function TransactionDetailPage({ id }: { id: string }) {
             <Link href={`/marketplace/${txn.listingId}`} className="btn btn-outline btn-sm">
               View listing
             </Link>
+            {selling && txn.status === "Reserved" && txn.paidAt ? (
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={() => void handleMarkCompleted()}
+                disabled={acting}
+              >
+                {acting ? "Completing…" : "Mark exchange completed"}
+              </button>
+            ) : null}
+            {selling && txn.status === "Completed" ? (
+              <div className="field-foot">Exchange completed ✓</div>
+            ) : null}
+            {actionError ? (
+              <div className="upload-error">{actionError}</div>
+            ) : null}
           </div>
         </div>
       </div>

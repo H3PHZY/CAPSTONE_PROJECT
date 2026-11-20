@@ -14,13 +14,6 @@ import { canRaiseDispute } from "@/lib/disputes";
 
 type RoleFilter = "all" | "buying" | "selling";
 
-function payLabel(t: TransactionView) {
-  if (t.paidAt) return "Paid";
-  if (t.status === "Reserved" && t.amountNgn && t.amountNgn > 0) return "Unpaid";
-  if (t.status === "Completed") return "—";
-  return "—";
-}
-
 function statusClass(status: string) {
   return `status-pill status-pill--${status.toLowerCase()}`;
 }
@@ -167,7 +160,7 @@ export function TransactionsPage() {
       <div className="page-head">
         <div>
           <h1 className="page-title">Transactions</h1>
-          <div className="page-sub">Every exchange you buy or sell, with payment status</div>
+          <div className="page-sub">Every exchange you buy or sell</div>
         </div>
       </div>
 
@@ -200,7 +193,6 @@ export function TransactionsPage() {
           <div>COUNTERPARTY</div>
           <div>AMOUNT</div>
           <div>STATUS</div>
-          <div>PAYMENT</div>
           <div />
         </div>
         {visible.length === 0 ? (
@@ -231,7 +223,6 @@ export function TransactionsPage() {
                 <div>
                   <span className={statusClass(t.status)}>{t.status}</span>
                 </div>
-                <div className="mine-cell">{payLabel(t)}</div>
                 <div className="mine-cell">View</div>
               </Link>
             );
