@@ -238,7 +238,7 @@ export function AuthForm({
                   <label className="field-label">Industrial cluster</label>
                   <Select
                     value={cluster}
-                    options={["Ogba", "Ikeja", "Isolo", "Apapa"]}
+                    options={["Ogba", "Ikeja", "Isolo", "Apapa", "Other"]}
                     onChange={setCluster}
                     aria-label="Industrial cluster"
                   />

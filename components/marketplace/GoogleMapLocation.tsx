@@ -12,11 +12,14 @@ type GoogleMapLocationProps = {
 // Default coordinates for Lagos SME clusters
 const CLUSTER_COORDS: Record<string, { lat: number; lng: number }> = {
   Ogba: { lat: 6.6353, lng: 3.3429 },
+  "Ogba Industrial Estate": { lat: 6.6353, lng: 3.3429 },
   Ikeja: { lat: 6.6018, lng: 3.3515 },
+  "Ikeja Industrial Estate": { lat: 6.6018, lng: 3.3515 },
   Isolo: { lat: 6.5298, lng: 3.3283 },
   Apapa: { lat: 6.4474, lng: 3.359 },
   Oshodi: { lat: 6.5569, lng: 3.3524 },
   Ilupeju: { lat: 6.5481, lng: 3.3644 },
+  Other: { lat: 6.5244, lng: 3.3792 },
 };
 
 export function GoogleMapLocation({
@@ -29,20 +32,20 @@ export function GoogleMapLocation({
     if (lat != null && lng != null && !isNaN(lat) && !isNaN(lng)) {
       return { lat, lng };
     }
-    return CLUSTER_COORDS[zone] || CLUSTER_COORDS.Ogba;
+    return CLUSTER_COORDS[zone] || CLUSTER_COORDS.Other || CLUSTER_COORDS.Ogba;
   }, [lat, lng, zone]);
 
-  const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-
-  // Use official Embed API if key is present; otherwise use Google Maps web embed
+  // OpenStreetMap embed URL — zero API key required, completely free & reliable
   const mapSrc = useMemo(() => {
-    if (apiKey) {
-      return `https://www.google.com/maps/embed/v1/place?key=${apiKey}&q=${coords.lat},${coords.lng}&zoom=14`;
-    }
-    return `https://maps.google.com/maps?q=${coords.lat},${coords.lng}&z=14&output=embed`;
-  }, [apiKey, coords.lat, coords.lng]);
+    const delta = 0.008; // zoom bounding box around coordinates
+    const minLon = coords.lng - delta;
+    const minLat = coords.lat - delta;
+    const maxLon = coords.lng + delta;
+    const maxLat = coords.lat + delta;
+    return `https://www.openstreetmap.org/export/embed.html?bbox=${minLon}%2C${minLat}%2C${maxLon}%2C${maxLat}&layer=mapnik&marker=${coords.lat}%2C${coords.lng}`;
+  }, [coords.lat, coords.lng]);
 
-  const externalMapUrl = `https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}`;
+  const externalMapUrl = `https://www.openstreetmap.org/?mlat=${coords.lat}&mlon=${coords.lng}#map=16/${coords.lat}/${coords.lng}`;
 
   return (
     <div className="google-map-container" style={{ marginTop: 12 }}>
@@ -63,7 +66,6 @@ export function GoogleMapLocation({
           height="100%"
           style={{ border: 0 }}
           loading="lazy"
-          allowFullScreen
           referrerPolicy="no-referrer-when-downgrade"
           src={mapSrc}
         />
@@ -102,12 +104,12 @@ export function GoogleMapLocation({
           </div>
         )}
 
-        {/* External Google Maps launch button floating at bottom-right */}
+        {/* External Map launch button floating at bottom-right */}
         <a
           href={externalMapUrl}
           target="_blank"
           rel="noopener noreferrer"
-          title="Open in Google Maps"
+          title="Open in OpenStreetMap"
           style={{
             position: "absolute",
             bottom: 8,
@@ -125,10 +127,9 @@ export function GoogleMapLocation({
             gap: "4px",
           }}
         >
-          <span>Open in Google Maps ↗</span>
+          <span>Open map ↗</span>
         </a>
       </div>
     </div>
   );
 }
-

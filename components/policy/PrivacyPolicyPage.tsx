@@ -55,7 +55,7 @@ const SECTIONS: Section[] = [
   {
     title: "Other services that handle your data",
     body: [
-      "Paystack (payments), Google Maps (turning addresses into map points), Hugging Face (photo classification), Cloudinary (storing images and attachments), and our hosting providers, Vercel and Render.",
+      "Paystack (payments), Geoapify (turning addresses into map coordinates), Hugging Face (photo classification), Cloudinary (storing images and attachments), and our hosting providers, Vercel and Render.",
       "We do not sell your data or share it with marketers.",
     ],
   },

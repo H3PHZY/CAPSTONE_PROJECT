@@ -10,6 +10,7 @@ const ZONE_COORDS: Record<string, { lat: number; lng: number }> = {
   "Ikeja Industrial Estate": { lat: 6.6018, lng: 3.3515 },
   Isolo: { lat: 6.535, lng: 3.322 },
   Apapa: { lat: 6.4474, lng: 3.359 },
+  Other: { lat: 6.5244, lng: 3.3792 },
 };
 
 const VIEWER_DEFAULT = ZONE_COORDS.Ogba;

@@ -9,6 +9,7 @@ ZONE_COORDS: Dict[str, Tuple[float, float]] = {
     'Ikeja Industrial Estate': (6.6018, 3.3515),
     'Isolo': (6.535, 3.322),
     'Apapa': (6.4474, 3.359),
+    'Other': (6.5244, 3.3792),
 }
 
 VIEWER_DEFAULT = ZONE_COORDS['Ogba']

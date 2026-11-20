@@ -279,6 +279,7 @@ export const PICKUP_LOCATIONS = [
   "Ikeja Industrial Estate",
   "Isolo",
   "Apapa",
+  "Other",
 ] as const;
 
 export const SORT_OPTIONS = [

@@ -1,15 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-type GeocodeResult = {
-  formatted_address: string;
-  geometry: { location: { lat: number; lng: number } };
-};
-
 export async function GET(request: NextRequest) {
-  const key = process.env.GOOGLE_MAPS_API_KEY;
+  const key = process.env.GEOAPIFY_API_KEY;
   if (!key) {
     return NextResponse.json(
-      { error: "Google Maps geocoding is not configured on the server." },
+      { error: "Geoapify geocoding is not configured on the server." },
       { status: 503 }
     );
   }
@@ -44,70 +39,91 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const query = new URLSearchParams({ key });
-  if (reverse) query.set("latlng", `${latitude},${longitude}`);
-  else query.set("address", `${address}, Lagos, Nigeria`);
+  let apiUrl: string;
+  if (reverse) {
+    apiUrl = `https://api.geoapify.com/v1/geocode/reverse?lat=${latitude}&lon=${longitude}&apiKey=${encodeURIComponent(
+      key
+    )}`;
+  } else {
+    apiUrl = `https://api.geoapify.com/v1/geocode/search?text=${encodeURIComponent(
+      `${address}, Lagos, Nigeria`
+    )}&filter=countrycode:ng&limit=1&apiKey=${encodeURIComponent(key)}`;
+  }
 
   let response: Response;
   try {
-    response = await fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?${query}`,
-      { cache: "no-store", signal: AbortSignal.timeout(10_000) }
-    );
+    response = await fetch(apiUrl, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
   } catch {
     return NextResponse.json(
-      { error: "Google Maps geocoding request failed or timed out." },
+      { error: "Geoapify geocoding request failed or timed out." },
       { status: 502 }
     );
   }
   if (!response.ok) {
     return NextResponse.json(
-      { error: "Google Maps geocoding request failed." },
+      { error: "Geoapify geocoding request failed." },
       { status: 502 }
     );
   }
 
+  type GeoapifyFeature = {
+    properties?: {
+      formatted?: string;
+      lat?: number;
+      lon?: number;
+    };
+    geometry?: {
+      coordinates?: [number, number]; // [lon, lat]
+    };
+  };
+
   let data: {
-    status: string;
-    error_message?: string;
-    results?: GeocodeResult[];
+    features?: GeoapifyFeature[];
+    message?: string;
   };
   try {
     data = (await response.json()) as typeof data;
   } catch {
     return NextResponse.json(
-      { error: "Google Maps returned an invalid geocoding response." },
+      { error: "Geoapify returned an invalid geocoding response." },
       { status: 502 }
-    );
-  }
-  if (data.status !== "OK" || !data.results?.[0]) {
-    const status = data.status === "ZERO_RESULTS" ? 404 : 502;
-    return NextResponse.json(
-      { error: data.error_message || `Google Maps geocoding returned ${data.status}.` },
-      { status }
     );
   }
 
-  const result = data.results[0];
-  const resultLat = result.geometry?.location?.lat;
-  const resultLng = result.geometry?.location?.lng;
+  const feature = data.features?.[0];
+  if (!feature) {
+    return NextResponse.json(
+      { error: "No location found for this address." },
+      { status: 404 }
+    );
+  }
+
+  const coords = feature.geometry?.coordinates;
+  const resultLon = coords?.[0] ?? feature.properties?.lon;
+  const resultLat = coords?.[1] ?? feature.properties?.lat;
+  const formattedAddress =
+    feature.properties?.formatted || address || `${resultLat}, ${resultLon}`;
+
   if (
-    typeof result.formatted_address !== "string" ||
     !Number.isFinite(resultLat) ||
-    !Number.isFinite(resultLng) ||
-    resultLat < -90 ||
-    resultLat > 90 ||
-    resultLng < -180 ||
-    resultLng > 180
+    !Number.isFinite(resultLon) ||
+    resultLat! < -90 ||
+    resultLat! > 90 ||
+    resultLon! < -180 ||
+    resultLon! > 180
   ) {
     return NextResponse.json(
-      { error: "Google Maps returned an invalid location." },
+      { error: "Geoapify returned an invalid location coordinate." },
       { status: 502 }
     );
   }
+
   return NextResponse.json({
-    address: result.formatted_address,
+    address: formattedAddress,
     lat: resultLat,
-    lng: resultLng,
+    lng: resultLon,
   });
 }
