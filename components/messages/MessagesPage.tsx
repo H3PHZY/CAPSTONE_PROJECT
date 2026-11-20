@@ -481,9 +481,7 @@ export function MessagesPage() {
   const canAgree =
     isSeller &&
     Boolean(parties) &&
-    (!status || status === "Interest") &&
-    status !== "Reserved" &&
-    status !== "Completed";
+    (!status || status === "Interest");
   const canComplete =
     Boolean(parties) &&
     canManuallyCompleteTransaction(status, txn?.amountNgn, txn?.paidAt);
