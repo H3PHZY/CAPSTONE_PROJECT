@@ -1054,14 +1054,22 @@ class MediaUploadView(views.APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        uploaded.seek(0)
         path = f'{category}/{request.user.id}/{uuid.uuid4().hex}.{extension}'
         storage = (
             storages['raw_media']
             if category == 'message-attachment' and extension not in self.IMAGE_TYPES
             else default_storage
         )
-        stored_path = storage.save(path, uploaded)
-        url = request.build_absolute_uri(storage.url(stored_path))
+        try:
+            stored_path = storage.save(path, uploaded)
+            raw_url = storage.url(stored_path)
+            url = raw_url if raw_url.startswith(('http://', 'https://')) else request.build_absolute_uri(raw_url)
+        except Exception as exc:
+            return Response(
+                {'error': f'Media storage upload failed: {exc}'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
         return Response({'path': stored_path, 'url': url}, status=status.HTTP_201_CREATED)
 
 # ─── 7. Paystack Payment Views ────────────────────────────────────────────────
