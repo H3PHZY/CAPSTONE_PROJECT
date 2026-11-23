@@ -14,10 +14,6 @@ import type { ListingStatus, MyListing } from "@/lib/types";
 const EMPTY_LISTINGS: MyListing[] = [];
 const EMPTY_TRANSACTIONS: TransactionView[] = [];
 
-function statusClass(status: ListingStatus) {
-  return `status-pill status-pill--${status.toLowerCase()}`;
-}
-
 export function MyListingsPage() {
   const { user, profile, ready } = useAuth();
   const [listingRows, setListingRows] = useState<MyListing[]>([]);
@@ -60,10 +56,10 @@ export function MyListingsPage() {
       .then(([listings, txns]) => {
         if (!active) return;
         setListingRows(listings);
-        setTransactionRows(txns.filter((t) => t.sellerId === user.id));
-        setLoadedUserId(user.id);
+        setTransactionRows(txns.filter((t) => String(t.sellerId) === String(user.id)));
+        setLoadedUserId(String(user.id));
         setError(null);
-        const selling = txns.filter((t) => t.sellerId === user.id);
+        const selling = txns.filter((t) => String(t.sellerId) === String(user.id));
         const interest = selling.filter((t) => t.status === "Interest");
         const reserved = selling.filter((t) => t.status === "Reserved");
         const completed = selling.filter((t) => t.status === "Completed");
@@ -104,7 +100,7 @@ export function MyListingsPage() {
       .catch((err) => {
         if (!active) return;
         setError(err instanceof Error ? err.message : "Could not load your listings");
-        setLoadedUserId(user.id);
+        setLoadedUserId(String(user.id));
       });
 
     return () => {
@@ -116,17 +112,40 @@ export function MyListingsPage() {
     const priceOf = (t: TransactionView) =>
       t.amountNgn && t.amountNgn > 0 ? t.amountNgn : 0;
     const currency = txns.find((t) => t.amountNgn != null)?.currency ?? "NGN";
-    const paid = txns.filter((t) => t.paidAt || t.status === "Completed");
-    const earned = paid.reduce((sum, t) => sum + priceOf(t), 0);
+    const paid = txns.filter(
+      (t) =>
+        String(t.sellerId) === String(user?.id) &&
+        (Boolean(t.paidAt) || t.status === "Completed")
+    );
+    let earned = paid.reduce((sum, t) => sum + priceOf(t), 0);
+    let paidCount = paid.length;
+
+    // Also account for listings marked Sold in case transaction sync is delayed
+    const soldListings = rows.filter((r) => r.status === "Sold");
+    if (soldListings.length > paidCount) {
+      const soldTotal = soldListings.reduce(
+        (sum, r) => sum + (parseFloat(String(r.price).replace(/,/g, "")) || 0),
+        0
+      );
+      if (soldTotal > earned) {
+        earned = soldTotal;
+        paidCount = soldListings.length;
+      }
+    }
+
     const awaiting = txns.filter(
-      (t) => t.status === "Reserved" && !t.paidAt && priceOf(t) > 0
+      (t) =>
+        String(t.sellerId) === String(user?.id) &&
+        t.status === "Reserved" &&
+        !t.paidAt &&
+        priceOf(t) > 0
     );
     const awaitingTotal = awaiting.reduce((sum, t) => sum + priceOf(t), 0);
     return [
       {
         k: "RECEIVED",
         v: formatTransactionAmount(earned, currency),
-        sub: `${paid.length} paid exchange${paid.length === 1 ? "" : "s"}`,
+        sub: `${paidCount} paid exchange${paidCount === 1 ? "" : "s"}`,
       },
       {
         k: "AWAITING PAYMENT",
@@ -134,7 +153,7 @@ export function MyListingsPage() {
         sub: `${awaiting.length} reserved deal${awaiting.length === 1 ? "" : "s"}`,
       },
     ];
-  }, [txns]);
+  }, [txns, rows, user?.id]);
 
   const stats = useMemo(() => {
     const live = rows.filter((r) => r.status === "Live");
@@ -194,7 +213,6 @@ export function MyListingsPage() {
           <div>CATEGORY</div>
           <div>WEIGHT</div>
           <div>PRICE</div>
-          <div>STATUS</div>
           <div>VIEWS</div>
           <div />
         </div>
@@ -235,9 +253,6 @@ export function MyListingsPage() {
             <div className="mine-cell">{m.material}</div>
             <div className="mine-cell mine-cell--mono">{m.weight} kg</div>
             <div className="mine-cell mine-cell--mono">₦{m.price}</div>
-            <div>
-              <span className={statusClass(m.status)}>{m.status}</span>
-            </div>
             <div className="mine-cell mine-cell--mono">{m.views}</div>
             <div>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

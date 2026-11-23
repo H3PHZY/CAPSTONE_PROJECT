@@ -128,8 +128,8 @@ export function TransactionsPage() {
 
   const visible = useMemo(() => {
     if (!user) return [];
-    if (role === "buying") return rows.filter((t) => t.buyerId === user.id);
-    if (role === "selling") return rows.filter((t) => t.sellerId === user.id);
+    if (role === "buying") return rows.filter((t) => String(t.buyerId) === String(user.id));
+    if (role === "selling") return rows.filter((t) => String(t.sellerId) === String(user.id));
     return rows;
   }, [rows, role, user]);
 
@@ -203,7 +203,7 @@ export function TransactionsPage() {
           </div>
         ) : (
           visible.map((t) => {
-            const selling = t.sellerId === user.id;
+            const selling = String(t.sellerId) === String(user.id);
             return (
               <Link key={t.id} href={`/transactions/${t.id}`} className="txn-list-row txn-list-row--link">
                 <div className="mine-cell mine-cell--mono">{transactionRef(t.id)}</div>

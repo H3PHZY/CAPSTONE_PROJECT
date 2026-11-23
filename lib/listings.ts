@@ -266,7 +266,7 @@ export async function createLiveListing(input: CreateListingInput) {
 export async function fetchOwnedListing(listingId: string, sellerId: string) {
   try {
     const row = await djangoListings.fetchById(listingId);
-    if (row.seller_id !== sellerId) return null;
+    if (String(row.seller_id) !== String(sellerId)) return null;
     return fromDjangoListing(row);
   } catch (error) {
     if (error instanceof DjangoApiError && error.status === 404) return null;

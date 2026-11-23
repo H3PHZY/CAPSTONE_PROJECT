@@ -16,6 +16,7 @@ export type TransactionView = {
   listingTitle: string;
   material: MaterialCategory;
   weightKg: number;
+  listingPrice?: number | null;
   amountNgn: number | null;
   currency: string;
   counterpartyName: string;
@@ -24,6 +25,7 @@ export type TransactionView = {
 
 export function mapTxn(row: DjangoTransaction): TransactionView {
   const amountNgn = row.amount_ngn == null ? null : Number(row.amount_ngn);
+  const listingPrice = row.listing_price == null ? null : Number(row.listing_price);
   return {
     id: row.id,
     listingId: row.listing_id,
@@ -37,6 +39,7 @@ export function mapTxn(row: DjangoTransaction): TransactionView {
     listingTitle: row.listing_title || "Listing",
     material: (row.listing_material || "Metal") as MaterialCategory,
     weightKg: Number(row.listing_weight || 0),
+    listingPrice,
     amountNgn,
     currency: row.currency || "NGN",
     counterpartyName: row.counterparty_name || "EcoLoop user",

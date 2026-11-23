@@ -151,7 +151,7 @@ export function ListingDetail({ id }: ListingDetailProps) {
   }
 
   const isOwnListing = Boolean(
-    user && listing && (user.id === listing.sellerId || user.id === listing.seller)
+    user && listing && (String(user.id) === String(listing.sellerId) || String(user.id) === String(listing.seller))
   );
   // listing.seller holds the business name — we need seller_id from raw data;
   // we do a cheaper check: if the user is the verified owner they can manage it.

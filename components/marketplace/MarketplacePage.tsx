@@ -31,7 +31,7 @@ export function MarketplacePage() {
     [profile?.address, profile?.lat, profile?.lng]
   );
   const [q, setQ] = useState("");
-  const [radius, setRadius] = useState<RadiusOption>("Within 10 km");
+  const [radius, setRadius] = useState<RadiusOption>("All Lagos State");
   const [cat, setCat] = useState<MaterialCategory | "All categories">("All categories");
   const [sort, setSort] = useState<SortOption>("Nearest first");
   const [verifiedOnly, setVerifiedOnly] = useState(false);

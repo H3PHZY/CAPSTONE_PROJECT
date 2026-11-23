@@ -136,7 +136,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 function profileFromResponse(user: DjangoUserResponse): DjangoProfile {
   return {
     ...user.profile,
-    id: user.id,
+    id: String(user.id),
     email: user.email,
     avatar_url: user.profile.display_avatar_url ?? user.profile.avatar_url,
   };
@@ -155,7 +155,7 @@ async function fetchMe(): Promise<DjangoProfile | null> {
 }
 
 function profileToUser(p: DjangoProfile): DjangoUser {
-  return { id: p.id, email: p.email };
+  return { id: String(p.id), email: p.email };
 }
 
 // ─── Provider ─────────────────────────────────────────────────────────────────

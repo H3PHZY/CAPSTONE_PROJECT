@@ -18,6 +18,7 @@ type PaystackButtonProps = {
   listingTitle: string;
   /** Called after backend confirms Sold so parent can update its state. */
   onPurchaseComplete: () => void;
+  variant?: "default" | "compact";
 };
 
 type Phase =
@@ -34,6 +35,7 @@ export function PaystackButton({
   priceFormatted,
   listingTitle,
   onPurchaseComplete,
+  variant = "default",
 }: PaystackButtonProps) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -99,6 +101,45 @@ export function PaystackButton({
       setErrorMsg(err instanceof Error ? err.message : "Verification failed");
       setPhase("error");
     }
+  }
+
+  // ── Compact variant for header actions ──────────────────────────────────
+  if (variant === "compact") {
+    if (phase === "success") {
+      return (
+        <button type="button" className="btn btn-primary btn-sm" disabled>
+          Paid ✓
+        </button>
+      );
+    }
+    const busy = phase === "opening" || phase === "verifying";
+    const label =
+      phase === "opening"
+        ? "Opening…"
+        : phase === "verifying"
+          ? "Verifying…"
+          : priceFormatted
+            ? `Pay ₦${priceFormatted}`
+            : "Pay";
+    return (
+      <div style={{ display: "inline-flex", flexDirection: "column", gap: 4 }}>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm paystack-btn"
+          onClick={() => void handlePurchase()}
+          disabled={busy}
+          aria-busy={busy}
+        >
+          {busy && <span className="paystack-spinner" aria-hidden="true" />}
+          {label}
+        </button>
+        {phase === "error" && errorMsg ? (
+          <div className="upload-error" style={{ fontSize: 11, padding: "2px 6px" }}>
+            {errorMsg}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   // ── Sold / success state ──────────────────────────────────────────────────

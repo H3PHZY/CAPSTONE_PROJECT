@@ -100,8 +100,8 @@ export function MessagesPage() {
   const activeOtherUserId = active?.otherUserId;
   const parties = useMemo(() => {
     if (!userId || !activeSellerId || !activeOtherUserId) return null;
-    const sellerId = activeSellerId;
-    const buyerId = userId === sellerId ? activeOtherUserId : userId;
+    const sellerId = String(activeSellerId);
+    const buyerId = String(userId) === sellerId ? String(activeOtherUserId) : String(userId);
     if (!buyerId || buyerId === sellerId) return null;
     return { buyerId, sellerId };
   }, [userId, activeSellerId, activeOtherUserId]);
@@ -476,12 +476,8 @@ export function MessagesPage() {
   }
 
   const status = txn?.status;
-  const isSeller = Boolean(user && active && user.id === active.sellerId);
-  const isBuyer = Boolean(user && parties && user.id === parties.buyerId);
-  const canAgree =
-    isSeller &&
-    Boolean(parties) &&
-    (!status || status === "Interest");
+  const isSeller = Boolean(user && active && String(user.id) === String(active.sellerId));
+  const isBuyer = Boolean(user && parties && String(user.id) === String(parties.buyerId));
   const canComplete =
     Boolean(parties) &&
     canManuallyCompleteTransaction(status, txn?.amountNgn, txn?.paidAt);
@@ -573,34 +569,46 @@ export function MessagesPage() {
                   >
                     View listing
                   </Link>
-                  {isBuyer && status !== "Reserved" && status !== "Completed" ? (
+
+                  {txn ? (
                     <Link
-                      href={`/marketplace/${active.listingId}`}
-                      className="btn btn-primary btn-sm"
+                      href={`/transactions/${txn.id}`}
+                      className="btn btn-outline btn-sm"
                     >
-                      Pay on listing
+                      Transaction
                     </Link>
                   ) : null}
-                  {canAgree ? (
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-sm"
-                      onClick={() => void onMarkAgreed()}
-                      disabled={acting}
-                    >
-                      Reserve for this buyer
+
+                  {isBuyer && !txn?.paidAt && status !== "Completed" ? (
+                    <PaystackButton
+                      variant="compact"
+                      buyerEmail={user.email || "buyer@ecoloop.ng"}
+                      buyerId={user.id}
+                      listingId={active.listingId}
+                      priceFormatted={
+                        (txn?.amountNgn || txn?.listingPrice)
+                          ? Number(txn.amountNgn || txn.listingPrice).toLocaleString("en-NG")
+                          : ""
+                      }
+                      listingTitle={active.listingTitle}
+                      onPurchaseComplete={() => void refreshAfterPayment()}
+                    />
+                  ) : isBuyer && (txn?.paidAt || status === "Completed") ? (
+                    <button type="button" className="btn btn-primary btn-sm" disabled>
+                      Paid ✓
                     </button>
                   ) : null}
-                  {canComplete ? (
+
+                  {isSeller && canComplete ? (
                     <button
                       type="button"
                       className="btn btn-primary btn-sm"
                       onClick={() => void onMarkCompleted()}
                       disabled={acting}
                     >
-                      Mark completed
+                      {acting ? "Completing…" : "Mark completed"}
                     </button>
-                  ) : status === "Completed" ? (
+                  ) : isSeller && status === "Completed" ? (
                     <button type="button" className="btn btn-primary btn-sm" disabled>
                       Completed
                     </button>
@@ -608,27 +616,16 @@ export function MessagesPage() {
                 </div>
               </div>
 
-              {status === "Reserved" && isBuyer && txn?.amountNgn &&
-              txn.amountNgn > 0 && !txn.paidAt ? (
+              {txn?.paidAt || status === "Completed" ? (
                 <div className="msgs-pay-hint">
-                  Complete payment securely to finish reserving this listing.
-                  <PaystackButton
-                    buyerEmail={user.email || "buyer@ecoloop.ng"}
-                    buyerId={user.id}
-                    listingId={active.listingId}
-                    priceFormatted={txn.amountNgn.toLocaleString("en-NG")}
-                    listingTitle={active.listingTitle}
-                    onPurchaseComplete={() => void refreshAfterPayment()}
-                  />
+                  Payment is confirmed.
+                  {isSeller && status !== "Completed"
+                    ? " Mark the exchange completed after the physical handover."
+                    : ""}
                 </div>
-              ) : status === "Reserved" && txn?.amountNgn &&
-              txn.amountNgn > 0 && !txn.paidAt ? (
+              ) : status === "Reserved" && isSeller ? (
                 <div className="msgs-pay-hint">
                   Waiting for the buyer to complete payment through Paystack.
-                </div>
-              ) : status === "Reserved" ? (
-                <div className="msgs-pay-hint">
-                  Payment is confirmed. Mark the exchange completed after the handover.
                 </div>
               ) : null}
 

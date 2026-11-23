@@ -44,6 +44,7 @@ export type DjangoTransaction = {
   listing_title: string;
   listing_material: MaterialCategory;
   listing_weight: string | number;
+  listing_price?: string | number | null;
   amount_ngn: string | number | null;
   currency: string;
   buyer_id: string;

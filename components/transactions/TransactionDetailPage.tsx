@@ -131,7 +131,7 @@ export function TransactionDetailPage({ id }: { id: string }) {
     );
   }
 
-  const selling = txn.sellerId === user.id;
+  const selling = String(txn.sellerId) === String(user.id);
   const priced = Boolean(txn.amountNgn && txn.amountNgn > 0);
 
   return (

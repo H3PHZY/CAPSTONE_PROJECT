@@ -2622,7 +2622,7 @@ button:focus-visible {
 .mine-table-head,
 .mine-table-row {
   display: grid;
-  grid-template-columns: 52px minmax(0, 2.2fr) minmax(0, 1fr) minmax(0, 0.85fr) minmax(0, 1fr) minmax(0, 1.05fr) minmax(0, 0.6fr) 84px;
+  grid-template-columns: 52px minmax(0, 2.6fr) minmax(0, 1.1fr) minmax(0, 0.9fr) minmax(0, 1.1fr) minmax(0, 0.7fr) 84px;
   gap: 12px;
   padding: 12px 18px;
   align-items: center;

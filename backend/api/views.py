@@ -416,6 +416,9 @@ class ListingViewSet(viewsets.ModelViewSet):
                 | Q(status=ListingStatus.RESERVED, transactions__buyer=user)
             ).distinct()
 
+        if self.action == 'retrieve':
+            return qs
+
         # Query Filters
         q = self.request.query_params.get('q')
         if q:
