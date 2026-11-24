@@ -100,7 +100,7 @@ export function GoogleMapLocation({
                 background: "#16a34a",
               }}
             />
-            {distance} km away · {zone}
+            {distance < 1 ? "< 1 km away" : `${distance} km away`} · {zone}
           </div>
         )}
 

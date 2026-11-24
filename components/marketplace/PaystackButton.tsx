@@ -118,9 +118,7 @@ export function PaystackButton({
         ? "Opening…"
         : phase === "verifying"
           ? "Verifying…"
-          : priceFormatted
-            ? `Pay ₦${priceFormatted}`
-            : "Pay";
+          : "Pay";
     return (
       <div style={{ display: "inline-flex", flexDirection: "column", gap: 4 }}>
         <button
@@ -187,12 +185,6 @@ export function PaystackButton({
           {errorMsg}
         </div>
       ) : null}
-
-      <p className="paystack-sandbox-note">
-        Sandbox mode · use card{" "}
-        <code className="paystack-card-code">4084 0840 8408 4081</code> CVV{" "}
-        <code className="paystack-card-code">408</code> · any future expiry
-      </p>
     </div>
   );
 }

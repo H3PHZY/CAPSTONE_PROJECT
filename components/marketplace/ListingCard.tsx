@@ -54,7 +54,7 @@ export function ListingCard({
           <div className="listing-card-title listing-card-title--sm">{listing.title}</div>
           <div className="listing-card-meta-row">
             <span>{listing.weight} kg</span>
-            <span>{listing.distance} km</span>
+            <span>{listing.distance < 1 ? "< 1 km" : `${listing.distance} km`}</span>
             <span className="text-green">≈{co2} kg CO₂e</span>
           </div>
         </div>
@@ -91,7 +91,7 @@ export function ListingCard({
           </div>
           <div>
             <div className="stat-label">DISTANCE</div>
-            <div className="stat-value">{listing.distance} km</div>
+            <div className="stat-value">{listing.distance < 1 ? "< 1 km" : `${listing.distance} km`}</div>
           </div>
           <div>
             <div className="stat-label">ASKING</div>

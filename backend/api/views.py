@@ -565,9 +565,20 @@ class ListingViewSet(viewsets.ModelViewSet):
         return super().destroy(request, *args, **kwargs)
 
     def perform_update(self, serializer):
-        if serializer.instance.status in (ListingStatus.RESERVED, ListingStatus.SOLD):
-            raise PermissionDenied('Reserved or sold listings cannot be edited.')
-        serializer.save()
+        if serializer.instance.status == ListingStatus.SOLD:
+            raise PermissionDenied('Sold listings cannot be edited.')
+        if serializer.instance.status == ListingStatus.RESERVED:
+            non_price_fields = [k for k in serializer.validated_data.keys() if k != 'price_ngn']
+            if non_price_fields:
+                raise PermissionDenied('Reserved listings cannot change details other than agreed price.')
+        listing = serializer.save()
+        if 'price_ngn' in serializer.validated_data and listing.price_ngn:
+            DealTransaction.objects.filter(
+                listing=listing,
+                paid_at__isnull=True,
+            ).exclude(status=TransactionStatus.COMPLETED).update(
+                amount_ngn=listing.price_ngn
+            )
 
 # ─── 3. Transaction ViewSet ───────────────────────────────────────────────────
 

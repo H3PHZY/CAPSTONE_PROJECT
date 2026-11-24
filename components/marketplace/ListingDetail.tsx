@@ -112,10 +112,8 @@ export function ListingDetail({ id }: ListingDetailProps) {
   const specs = [
     { k: "CATEGORY", v: listing.material },
     { k: "WEIGHT", v: `${listing.weight} kg` },
-    { k: "CONDITION", v: "Dry, sorted" },
     { k: "AVAILABLE", v: "Immediately" },
     { k: "MIN. ORDER", v: "Full lot" },
-    { k: "LOADING", v: "Buyer arranges" },
     { k: "LISTED", v: listedLabel },
     {
       k: "LISTING REF",

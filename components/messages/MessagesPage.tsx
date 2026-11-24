@@ -32,6 +32,8 @@ import {
   type AttachmentPreview,
 } from "@/components/messages/AttachmentLightbox";
 import { ProfileAvatar } from "@/components/ui/ProfileAvatar";
+import { djangoListings } from "@/lib/django-api";
+import { parsePriceNgn } from "@/lib/listings";
 
 export function MessagesPage() {
   const router = useRouter();

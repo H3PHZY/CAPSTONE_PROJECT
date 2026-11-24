@@ -49,8 +49,8 @@ export function QuickListingPage() {
   const [override, setOverride] = useState<MaterialCategory>("Metal");
   const [overridden, setOverridden] = useState(false);
   const [title, setTitle] = useState("");
-  const [weight, setWeight] = useState("180");
-  const [price, setPrice] = useState("52,000");
+  const [weight, setWeight] = useState("");
+  const [price, setPrice] = useState("");
   const [pickup, setPickup] = useState<string>(PICKUP_LOCATIONS[0]);
   const [location, setLocation] = useState<SelectedLocation>({
     address: "",
@@ -581,7 +581,7 @@ export function QuickListingPage() {
                     <input
                       value={weight}
                       onChange={(e) => setWeight(e.target.value)}
-                      placeholder="120"
+                      placeholder="e.g. 120"
                       className="input input--mono"
                     />
                   </div>
@@ -590,7 +590,7 @@ export function QuickListingPage() {
                     <input
                       value={price}
                       onChange={(e) => setPrice(e.target.value)}
-                      placeholder="48000"
+                      placeholder="e.g. 50,000"
                       className="input input--mono"
                     />
                   </div>
